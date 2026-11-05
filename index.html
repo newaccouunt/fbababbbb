@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
     <title>NOOBSTER X PANEL</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+
+    <!-- ✅ React CDN BEFORE inline script -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         :root {
@@ -16,9 +21,11 @@
         .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 20px; border-radius: 12px; font-weight: 600; font-size: 14px; cursor: pointer; border: none; transition: all 0.2s; }
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .btn-primary { background: linear-gradient(135deg, #dc2626, #c2410c); color: #fff; box-shadow: 0 8px 20px -6px rgba(220,38,38,0.4); }
+        .btn-primary:hover:not(:disabled) { transform: translateY(-1px); }
         .btn-secondary { background: #1a1a1a; border: 1px solid #2a2a2a; color: #aaa; }
         .btn-secondary:hover { background: #222; color: #fff; }
         .btn-danger { background: rgba(220,38,38,0.15); border: 1px solid rgba(220,38,38,0.3); color: #f87171; }
+        .btn-danger:hover { background: rgba(220,38,38,0.25); }
         .input { width: 100%; padding: 12px 16px; border-radius: 12px; background: #111; border: 1px solid #222; color: #fff; font-size: 14px; outline: none; transition: all 0.2s; }
         .input:focus { border-color: #dc2626; }
         .card { background: #0d0d0d; border: 1px solid #1f1f1f; border-radius: 16px; padding: 20px; }
@@ -29,6 +36,7 @@
         .spinner { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.2); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .fade-in { animation: fadeIn 0.4s ease-out; }
         .grid { display: grid; gap: 16px; }
         .grid-2 { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
@@ -36,13 +44,21 @@
         .tab { padding: 12px 18px; font-size: 13px; font-weight: 600; color: #555; border: none; background: none; cursor: pointer; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
         .tab.active { color: #f87171; border-bottom-color: #dc2626; }
         .device-card { background: #000; border: 1px solid #1f1f1f; border-radius: 16px; padding: 14px; transition: all 0.2s; }
+        .device-card:hover { border-color: #333; transform: translateY(-2px); }
         .stat-card { background: #0d0d0d; border: 1px solid #1f1f1f; border-radius: 14px; padding: 16px; }
         .stat-value { font-size: 28px; font-weight: 900; line-height: 1; margin-top: 6px; }
         .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: #555; font-weight: 600; }
-        .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1a1a1a; border: 1px solid #2a2a2a; color: #fff; padding: 14px 24px; border-radius: 14px; font-size: 14px; font-weight: 600; z-index: 99999; box-shadow: 0 10px 30px rgba(0,0,0,0.6); animation: fadeIn 0.3s ease-out; }
+        .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1a1a1a; border: 1px solid #2a2a2a; color: #fff; padding: 14px 24px; border-radius: 14px; font-size: 14px; font-weight: 600; z-index: 99999; box-shadow: 0 10px 30px rgba(0,0,0,0.6); animation: fadeIn 0.3s ease-out; max-width: 90vw; }
         .toast.error { border-color: rgba(220,38,38,0.4); color: #f87171; }
         .toast.success { border-color: rgba(34,197,94,0.4); color: #4ade80; }
         .hidden { display: none !important; }
+        .skeleton { background: linear-gradient(90deg, #111 25%, #1a1a1a 50%, #111 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 8px; }
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        .empty-state { text-align: center; padding: 60px 20px; color: #444; }
+        @media (max-width: 640px) {
+            .stat-value { font-size: 22px; }
+            .tabs .tab { padding: 10px 12px; font-size: 12px; }
+        }
     </style>
 </head>
 <body>
@@ -69,7 +85,8 @@
             adminSession: "nb_admin_session",
             firebaseAccs: "nb_firebase_accs",
             apiKeys: "nb_api_keys",
-            panelStatus: "nb_panel_status"
+            panelStatus: "nb_panel_status",
+            broadcastHistory: "nb_broadcast_history"
         };
 
         // Default Values
@@ -77,8 +94,10 @@
             DB.set(KEYS.panelStatus, { online: true, broadcast: "" });
         }
         if (!DB.get(KEYS.apiKeys)) {
-            // Default custom API key
             DB.set(KEYS.apiKeys, [{ id: 1, name: "Main API", key: "MY-WEB.SITE/v2/SLJSNSN19AJA", active: true }]);
+        }
+        if (!DB.get(KEYS.broadcastHistory)) {
+            DB.set(KEYS.broadcastHistory, []);
         }
 
         // ============================================================
@@ -122,14 +141,27 @@
             if (!ms) return "—";
             const diff = Date.now() - ms;
             const m = Math.floor(diff / 60000);
+            if (m < 1) return "just now";
             if (m < 60) return `${m}m ago`;
             return `${Math.floor(m/60)}h ago`;
+        }
+
+        // ✅ NEW: Export devices as JSON
+        function exportDevices(devices) {
+            const data = JSON.stringify(devices, null, 2);
+            const blob = new Blob([data], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `devices_${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
         }
 
         // ============================================================
         // REACT APP
         // ============================================================
-        const { useState, useEffect, useCallback } = React;
+        const { useState, useEffect, useCallback, useMemo } = React;
 
         // -- TOAST --
         function useToast() {
@@ -158,10 +190,35 @@
                 power: <><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></>,
                 megaphone: <><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></>,
                 wifi: <><path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/></>,
-                key: <><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></>
+                key: <><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></>,
+                download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>,
+                copy: <><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>,
+                clock: <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>,
+                filter: <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z"/>
             };
             return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">{icons[name]}</svg>;
         };
+
+        // -- SKELETON LOADER --
+        function SkeletonCard() {
+            return (
+                <div className="device-card">
+                    <div className="skeleton" style={{ height: "16px", width: "60%", marginBottom: "10px" }} />
+                    <div className="skeleton" style={{ height: "12px", width: "80%", marginBottom: "6px" }} />
+                    <div className="skeleton" style={{ height: "12px", width: "70%" }} />
+                </div>
+            );
+        }
+
+        // -- EMPTY STATE --
+        function EmptyState({ message, icon = "search" }) {
+            return (
+                <div className="empty-state">
+                    <div style={{ opacity: 0.4, marginBottom: "12px" }}><Icon name={icon} size={48} /></div>
+                    <p style={{ fontSize: "14px" }}>{message}</p>
+                </div>
+            );
+        }
 
         // -- ADMIN LOGIN --
         function AdminLogin({ onSuccess }) {
@@ -204,29 +261,32 @@
             const [accs, setAccs] = useState(() => DB.get(KEYS.firebaseAccs, []));
             const [apiKeys, setApiKeys] = useState(() => DB.get(KEYS.apiKeys, []));
             const [status, setStatus] = useState(() => DB.get(KEYS.panelStatus, { online: true, broadcast: "" }));
+            const [broadcastHistory, setBroadcastHistory] = useState(() => DB.get(KEYS.broadcastHistory, []));
             
             const [devices, setDevices] = useState([]);
             const [loading, setLoading] = useState(false);
+            const [search, setSearch] = useState("");
+            const [lastSync, setLastSync] = useState(null);
 
-            // Bulk State
             const [bulkText, setBulkText] = useState("");
-            // API State
             const [newApiName, setNewApiName] = useState("");
             const [newApiKey, setNewApiKey] = useState("");
-            // Broadcast
             const [broadcastMsg, setBroadcastMsg] = useState(status.broadcast || "");
 
-            // Save to storage
             const saveAccs = (list) => { setAccs(list); DB.set(KEYS.firebaseAccs, list); };
             const saveApis = (list) => { setApiKeys(list); DB.set(KEYS.apiKeys, list); };
             const saveStatus = (s) => { setStatus(s); DB.set(KEYS.panelStatus, s); };
+            const saveHistory = (list) => { setBroadcastHistory(list); DB.set(KEYS.broadcastHistory, list); };
 
-            // Load Devices Function (Auto-Remove Dead Firebase)
+            // ✅ NEW: Track device count per firebase
+            const [perAccCount, setPerAccCount] = useState({});
+
             const loadDevices = useCallback(async (silent = false) => {
                 if (!silent) setLoading(true);
                 const currentAccs = DB.get(KEYS.firebaseAccs, []);
                 let allDevs = [];
                 let failedAccs = [];
+                let counts = {};
 
                 await Promise.all(currentAccs.map(async (acc) => {
                     try {
@@ -234,13 +294,13 @@
                         const devs = parseDevices(data);
                         devs.forEach(d => { d._accountName = acc.name || "Firebase"; });
                         allDevs.push(...devs);
+                        counts[acc.id] = devs.length;
                     } catch (err) {
-                        // Auto remove if 403 or network error
                         failedAccs.push(acc.id);
+                        counts[acc.id] = 0;
                     }
                 }));
 
-                // Auto-remove failed firebases
                 if (failedAccs.length > 0) {
                     const filtered = currentAccs.filter(a => !failedAccs.includes(a.id));
                     saveAccs(filtered);
@@ -248,6 +308,8 @@
                 }
 
                 setDevices(allDevs);
+                setPerAccCount(counts);
+                setLastSync(Date.now());
                 if (!silent) setLoading(false);
             }, [toast]);
 
@@ -288,6 +350,28 @@
                 toast.push("API Key Created", "success");
             };
 
+            // ✅ NEW: Send broadcast with history
+            const handleBroadcast = () => {
+                if (!broadcastMsg.trim()) return toast.push("Type a message", "error");
+                const s = {...status, broadcast: broadcastMsg};
+                saveStatus(s);
+                const entry = { id: Date.now(), msg: broadcastMsg, time: Date.now() };
+                saveHistory([entry, ...broadcastHistory].slice(0, 20));
+                toast.push("Broadcast Sent!", "success");
+            };
+
+            // ✅ NEW: Filter devices
+            const filteredDevices = useMemo(() => {
+                if (!search.trim()) return devices;
+                const q = search.toLowerCase();
+                return devices.filter(d => 
+                    d.name.toLowerCase().includes(q) ||
+                    d.phoneNumber.toLowerCase().includes(q) ||
+                    d.android.toLowerCase().includes(q) ||
+                    (d._accountName || "").toLowerCase().includes(q)
+                );
+            }, [devices, search]);
+
             const stats = {
                 total: devices.length,
                 online: devices.filter(d => d.status).length,
@@ -298,7 +382,7 @@
 
             return (
                 <div style={{ minHeight: "100vh", paddingBottom: "40px" }}>
-                    <header style={{ background: "rgba(10,10,10,0.85)", backdropFilter: "blur(20px)", borderBottom: "1px solid #1a1a1a", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <header style={{ background: "rgba(10,10,10,0.85)", backdropFilter: "blur(20px)", borderBottom: "1px solid #1a1a1a", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                             <div style={{ width: "32px", height: "32px", borderRadius: "10px", background: "linear-gradient(135deg, #dc2626, #f97316)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                                 <Icon name="shield" size={16} color="#fff" />
@@ -319,15 +403,32 @@
 
                         {tab === "dashboard" && (
                             <div className="fade-in">
-                                <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", marginBottom: "24px" }}>
-                                    <div className="stat-card"><div className="stat-label">Total Devices</div><div className="stat-value">{stats.total}</div></div>
+                                <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", marginBottom: "24px" }}>
+                                    <div className="stat-card"><div className="stat-label">Total</div><div className="stat-value">{stats.total}</div></div>
                                     <div className="stat-card"><div className="stat-label">Online</div><div className="stat-value" style={{ color: "#22c55e" }}>{stats.online}</div></div>
                                     <div className="stat-card"><div className="stat-label">Offline</div><div className="stat-value" style={{ color: "#666" }}>{stats.offline}</div></div>
-                                    <div className="stat-card"><div className="stat-label">Firebase DB</div><div className="stat-value" style={{ color: "#60a5fa" }}>{stats.accs}</div></div>
+                                    <div className="stat-card"><div className="stat-label">Firebase</div><div className="stat-value" style={{ color: "#60a5fa" }}>{stats.accs}</div></div>
                                     <div className="stat-card"><div className="stat-label">API Keys</div><div className="stat-value" style={{ color: "#fbbf24" }}>{stats.apis}</div></div>
                                 </div>
+
+                                {/* ✅ NEW: Search + Export bar */}
+                                <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap" }}>
+                                    <div style={{ flex: 1, position: "relative", minWidth: "200px" }}>
+                                        <div style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: "#555" }}>
+                                            <Icon name="search" size={16} />
+                                        </div>
+                                        <input className="input" placeholder="Search devices..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: "40px" }} />
+                                    </div>
+                                    <button className="btn btn-secondary" onClick={() => loadDevices()} disabled={loading}>
+                                        {loading ? <div className="spinner" /> : <Icon name="refresh" size={14} />} Refresh
+                                    </button>
+                                    <button className="btn btn-secondary" onClick={() => exportDevices(devices)}>
+                                        <Icon name="download" size={14} /> Export
+                                    </button>
+                                </div>
+
                                 <div className="grid grid-2">
-                                    {devices.map(d => (
+                                    {filteredDevices.map(d => (
                                         <div key={d.id + d._accountName} className="device-card">
                                             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
                                                 <div style={{ fontWeight: 700, fontSize: "13px" }}>{d.name}</div>
@@ -338,15 +439,37 @@
                                         </div>
                                     ))}
                                 </div>
+                                {filteredDevices.length === 0 && <EmptyState message={search ? "No devices match your search" : "No devices loaded"} />}
                             </div>
                         )}
 
                         {tab === "bulk_firebase" && (
-                            <div className="card fade-in">
-                                <h2 style={{ fontSize: "16px", marginBottom: "10px" }}>Bulk Add Firebase (100+)</h2>
-                                <p style={{ fontSize: "12px", color: "#666", marginBottom: "16px" }}>Format: URL | KEY | NAME (One per line)</p>
-                                <textarea className="input" rows={10} value={bulkText} onChange={e => setBulkText(e.target.value)} placeholder="https://app1.firebaseio.com | SECRET_KEY | App 1" style={{ fontFamily: "monospace" }} />
-                                <button className="btn btn-primary" onClick={handleBulkAdd} style={{ marginTop: "16px" }}>Save & Load Firebases</button>
+                            <div className="fade-in">
+                                <div className="card" style={{ marginBottom: "16px" }}>
+                                    <h2 style={{ fontSize: "16px", marginBottom: "10px" }}>Bulk Add Firebase (100+)</h2>
+                                    <p style={{ fontSize: "12px", color: "#666", marginBottom: "16px" }}>Format: URL | KEY | NAME (One per line)</p>
+                                    <textarea className="input" rows={8} value={bulkText} onChange={e => setBulkText(e.target.value)} placeholder="https://app1.firebaseio.com | SECRET_KEY | App 1" style={{ fontFamily: "monospace" }} />
+                                    <button className="btn btn-primary" onClick={handleBulkAdd} style={{ marginTop: "16px" }}>Save & Load Firebases</button>
+                                </div>
+
+                                {/* ✅ NEW: List existing firebases with delete */}
+                                <div className="card">
+                                    <h3 style={{ fontSize: "14px", marginBottom: "12px" }}>Active Firebases ({accs.length})</h3>
+                                    {accs.length === 0 ? <EmptyState message="No firebases added yet" icon="database" /> : (
+                                        accs.map(acc => (
+                                            <div key={acc.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#111", padding: "12px", borderRadius: "10px", marginBottom: "8px", border: "1px solid #222", gap: "10px" }}>
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div style={{ fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px" }}>
+                                                        {acc.name}
+                                                        <span className="badge badge-amber">{perAccCount[acc.id] || 0} devices</span>
+                                                    </div>
+                                                    <div style={{ fontSize: "11px", color: "#60a5fa", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acc.url}</div>
+                                                </div>
+                                                <button className="btn btn-danger" style={{ padding: "8px 12px" }} onClick={() => { saveAccs(accs.filter(a => a.id !== acc.id)); toast.push("Firebase removed"); }}><Icon name="trash" size={14} /></button>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
                             </div>
                         )}
 
@@ -361,28 +484,52 @@
                                     <button className="btn btn-primary" onClick={handleAddApi}><Icon name="plus" size={14} /> Add</button>
                                 </div>
 
-                                {apiKeys.map(api => (
-                                    <div key={api.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#111", padding: "12px", borderRadius: "10px", marginBottom: "8px", border: "1px solid #222" }}>
-                                        <div>
-                                            <div style={{ fontSize: "13px", fontWeight: 700 }}>{api.name}</div>
-                                            <div style={{ fontSize: "11px", color: "#60a5fa", fontFamily: "monospace" }}>/{api.key}</div>
+                                {apiKeys.length === 0 ? <EmptyState message="No API keys yet" icon="key" /> : (
+                                    apiKeys.map(api => (
+                                        <div key={api.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#111", padding: "12px", borderRadius: "10px", marginBottom: "8px", border: "1px solid #222", gap: "10px" }}>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ fontSize: "13px", fontWeight: 700 }}>{api.name}</div>
+                                                <div style={{ fontSize: "11px", color: "#60a5fa", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>/{api.key}</div>
+                                            </div>
+                                            <button className="btn btn-secondary" style={{ padding: "8px 12px" }} onClick={() => { navigator.clipboard.writeText(api.key); toast.push("API key copied", "success"); }}><Icon name="copy" size={14} /></button>
+                                            <button className="btn btn-danger" style={{ padding: "8px 12px" }} onClick={() => saveApis(apiKeys.filter(a => a.id !== api.id))}><Icon name="trash" size={14} /></button>
                                         </div>
-                                        <button className="btn btn-danger" onClick={() => saveApis(apiKeys.filter(a => a.id !== api.id))}><Icon name="trash" size={14} /></button>
-                                    </div>
-                                ))}
+                                    ))
+                                )}
                             </div>
                         )}
 
                         {tab === "control" && (
-                            <div className="card fade-in">
-                                <h2 style={{ fontSize: "16px", marginBottom: "16px" }}>Panel Control</h2>
-                                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px", background: status.online ? "rgba(34,197,94,0.08)" : "rgba(220,38,38,0.08)", border: `1px solid ${status.online ? "rgba(34,197,94,0.3)" : "rgba(220,38,38,0.3)"}`, borderRadius: "12px", marginBottom: "20px" }}>
-                                    <div style={{ fontWeight: 700 }}>Server Status: <span style={{ color: status.online ? "#4ade80" : "#f87171" }}>{status.online ? "ONLINE" : "OFFLINE"}</span></div>
-                                    <button className={`btn ${status.online ? "btn-danger" : "btn-primary"}`} onClick={() => { const s = {...status, online: !status.online}; saveStatus(s); toast.push("Status updated"); }}>Turn {status.online ? "OFF" : "ON"}</button>
+                            <div className="fade-in">
+                                <div className="card" style={{ marginBottom: "16px" }}>
+                                    <h2 style={{ fontSize: "16px", marginBottom: "16px" }}>Panel Control</h2>
+                                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px", background: status.online ? "rgba(34,197,94,0.08)" : "rgba(220,38,38,0.08)", border: `1px solid ${status.online ? "rgba(34,197,94,0.3)" : "rgba(220,38,38,0.3)"}`, borderRadius: "12px" }}>
+                                        <div style={{ fontWeight: 700 }}>Server: <span style={{ color: status.online ? "#4ade80" : "#f87171" }}>{status.online ? "ONLINE" : "OFFLINE"}</span></div>
+                                        <button className={`btn ${status.online ? "btn-danger" : "btn-primary"}`} onClick={() => { const s = {...status, online: !status.online}; saveStatus(s); toast.push("Status updated"); }}><Icon name="power" size={14} /> Turn {status.online ? "OFF" : "ON"}</button>
+                                    </div>
                                 </div>
-                                <h3 style={{ fontSize: "14px", marginBottom: "10px" }}>Broadcast Message</h3>
-                                <textarea className="input" rows={3} value={broadcastMsg} onChange={e => setBroadcastMsg(e.target.value)} placeholder="Type message for public..." />
-                                <button className="btn btn-primary" onClick={() => { const s = {...status, broadcast: broadcastMsg}; saveStatus(s); toast.push("Broadcast Sent!"); }} style={{ marginTop: "10px" }}>Send Broadcast</button>
+
+                                <div className="card">
+                                    <h3 style={{ fontSize: "14px", marginBottom: "10px" }}>Broadcast Message</h3>
+                                    <textarea className="input" rows={3} value={broadcastMsg} onChange={e => setBroadcastMsg(e.target.value)} placeholder="Type message for public..." />
+                                    <div style={{ display: "flex", gap: "10px", marginTop: "10px" }}>
+                                        <button className="btn btn-primary" onClick={handleBroadcast}><Icon name="megaphone" size={14} /> Send Broadcast</button>
+                                        <button className="btn btn-secondary" onClick={() => { setBroadcastMsg(""); const s = {...status, broadcast: ""}; saveStatus(s); toast.push("Broadcast cleared"); }}>Clear</button>
+                                    </div>
+
+                                    {/* ✅ NEW: Broadcast History */}
+                                    {broadcastHistory.length > 0 && (
+                                        <div style={{ marginTop: "20px" }}>
+                                            <h4 style={{ fontSize: "12px", color: "#555", textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: "10px" }}>Recent Broadcasts</h4>
+                                            {broadcastHistory.slice(0, 5).map(h => (
+                                                <div key={h.id} style={{ background: "#111", padding: "10px", borderRadius: "8px", marginBottom: "6px", border: "1px solid #1f1f1f" }}>
+                                                    <div style={{ fontSize: "12px", color: "#ccc" }}>{h.msg}</div>
+                                                    <div style={{ fontSize: "10px", color: "#555", marginTop: "4px" }}>{formatTime(h.time)}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
                     </main>
@@ -395,35 +542,51 @@
             const [status, setStatus] = useState(() => DB.get(KEYS.panelStatus, { online: true, broadcast: "" }));
             const [devices, setDevices] = useState([]);
             const [loading, setLoading] = useState(true);
+            const [search, setSearch] = useState("");
+            const [autoRefresh, setAutoRefresh] = useState(true);  // ✅ NEW
+            const [lastSync, setLastSync] = useState(null);        // ✅ NEW
 
-            // API Key Auth Logic
             const urlPath = window.location.pathname;
             const apiKeys = DB.get(KEYS.apiKeys, []);
             const isValidApi = apiKeys.some(k => urlPath.includes(k.key) && k.active);
 
+            const loadDevices = useCallback(async (silent = false) => {
+                if (!silent) setLoading(true);
+                const accs = DB.get(KEYS.firebaseAccs, []);
+                let all = [];
+                await Promise.all(accs.map(async (acc) => {
+                    try {
+                        const data = await fetchFirebase(acc.url, acc.key, "clients");
+                        const devs = parseDevices(data);
+                        devs.forEach(d => d._accountName = acc.name);
+                        all.push(...devs);
+                    } catch {}
+                }));
+                setDevices(all);
+                setLastSync(Date.now());
+                setLoading(false);
+            }, []);
+
             useEffect(() => {
                 if (!status.online || !isValidApi) { setLoading(false); return; }
-                
-                const load = async () => {
-                    const accs = DB.get(KEYS.firebaseAccs, []);
-                    let all = [];
-                    await Promise.all(accs.map(async (acc) => {
-                        try {
-                            const data = await fetchFirebase(acc.url, acc.key, "clients");
-                            const devs = parseDevices(data);
-                            devs.forEach(d => d._accountName = acc.name);
-                            all.push(...devs);
-                        } catch {}
-                    }));
-                    setDevices(all);
-                    setLoading(false);
-                };
-                load();
-                const iv = setInterval(load, 20000);
+                loadDevices();
+                if (!autoRefresh) return;
+                const iv = setInterval(() => loadDevices(true), 20000);
                 return () => clearInterval(iv);
-            }, [status.online, isValidApi]);
+            }, [status.online, isValidApi, autoRefresh, loadDevices]);
 
-            // INVALID API / OFFLINE UI
+            // ✅ NEW: Filter devices
+            const filtered = useMemo(() => {
+                if (!search.trim()) return devices;
+                const q = search.toLowerCase();
+                return devices.filter(d =>
+                    d.name.toLowerCase().includes(q) ||
+                    d.phoneNumber.toLowerCase().includes(q) ||
+                    d.android.toLowerCase().includes(q) ||
+                    d.provider.toLowerCase().includes(q)
+                );
+            }, [devices, search]);
+
             if (!isValidApi || !status.online) {
                 return (
                     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }}>
@@ -444,10 +607,9 @@
                 );
             }
 
-            // VALID PUBLIC UI
             return (
                 <div style={{ minHeight: "100vh" }}>
-                    <header style={{ background: "rgba(10,10,10,0.85)", backdropFilter: "blur(20px)", borderBottom: "1px solid #1a1a1a", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <header style={{ background: "rgba(10,10,10,0.85)", backdropFilter: "blur(20px)", borderBottom: "1px solid #1a1a1a", padding: "14px 24px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, gap: "10px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                             <div style={{ width: "32px", height: "32px", borderRadius: "10px", background: "linear-gradient(135deg, #dc2626, #f97316)", display: "flex", alignItems: "center", justifyContent: "center" }}>
                                 <Icon name="zap" size={16} color="#fff" />
@@ -464,19 +626,42 @@
                     )}
 
                     <main style={{ maxWidth: "1200px", margin: "0 auto", padding: "24px" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px" }}>
-                            <h1 style={{ fontSize: "20px", fontWeight: 800 }}>Live Devices</h1>
-                            <div style={{ display: "flex", gap: "8px" }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "20px", flexWrap: "wrap", gap: "10px" }}>
+                            <div>
+                                <h1 style={{ fontSize: "20px", fontWeight: 800 }}>Live Devices</h1>
+                                {lastSync && <div style={{ fontSize: "11px", color: "#555", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px" }}><Icon name="clock" size={10} /> Synced {formatTime(lastSync)}</div>}
+                            </div>
+                            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                                 <span className="badge badge-green">{devices.filter(d => d.status).length} Online</span>
                                 <span className="badge badge-red">{devices.filter(d => !d.status).length} Offline</span>
                             </div>
                         </div>
+
+                        {/* ✅ NEW: Search + Auto-refresh bar */}
+                        <div style={{ display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap" }}>
+                            <div style={{ flex: 1, position: "relative", minWidth: "200px" }}>
+                                <div style={{ position: "absolute", left: "14px", top: "50%", transform: "translateY(-50%)", color: "#555" }}>
+                                    <Icon name="search" size={16} />
+                                </div>
+                                <input className="input" placeholder="Search by name, phone, android..." value={search} onChange={e => setSearch(e.target.value)} style={{ paddingLeft: "40px" }} />
+                            </div>
+                            <button className="btn btn-secondary" onClick={() => loadDevices()} disabled={loading}>
+                                {loading ? <div className="spinner" /> : <Icon name="refresh" size={14} />} Refresh
+                            </button>
+                            <button className="btn btn-secondary" onClick={() => setAutoRefresh(!autoRefresh)} style={{ borderColor: autoRefresh ? "rgba(34,197,94,0.4)" : undefined, color: autoRefresh ? "#4ade80" : undefined }}>
+                                <Icon name="wifi" size={14} /> {autoRefresh ? "Auto ON" : "Auto OFF"}
+                            </button>
+                        </div>
                         
                         {loading ? (
-                            <div style={{ textAlign: "center", padding: "60px" }}><div className="spinner" style={{ margin: "0 auto" }} /></div>
+                            <div className="grid grid-2">
+                                {[...Array(6)].map((_, i) => <SkeletonCard key={i} />)}
+                            </div>
+                        ) : filtered.length === 0 ? (
+                            <EmptyState message={search ? "No devices match your search" : "No devices online right now"} />
                         ) : (
                             <div className="grid grid-2">
-                                {devices.map(d => (
+                                {filtered.map(d => (
                                     <div key={d.id + d._accountName} className="device-card">
                                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
                                             <div style={{ fontWeight: 700, fontSize: "13px" }}>{d.name}</div>
@@ -485,7 +670,9 @@
                                         <div style={{ fontSize: "12px", color: "#888", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
                                             <div><span style={{color:"#555"}}>Android:</span> {d.android}</div>
                                             <div><span style={{color:"#555"}}>Battery:</span> {d.battery}</div>
-                                            <div><span style={{color:"#555"}}>Phone:</span> {d.phoneNumber}</div>
+                                            <div onClick={() => { navigator.clipboard.writeText(d.phoneNumber); }} style={{ cursor: "pointer" }} title="Click to copy">
+                                                <span style={{color:"#555"}}>Phone:</span> {d.phoneNumber}
+                                            </div>
                                             <div><span style={{color:"#555"}}>Network:</span> {d.provider}</div>
                                         </div>
                                     </div>
@@ -522,9 +709,5 @@
 
         ReactDOM.createRoot(document.getElementById("root")).render(<App />);
     </script>
-
-    <!-- React CDN -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 </body>
 </html>
